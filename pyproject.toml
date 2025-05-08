@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "algo-mvp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Lean backtest + paper-trade stack for Mike (Dock108)"
 authors = ["Dock108 <mike@dock108.ai>"]
 readme = "README.md"
@@ -12,6 +12,17 @@ vectorbt = "^0.27.3"
 streamlit = "^1.45.0"
 alpaca-trade-api = "^3.2.0"
 sqlalchemy = "^2.0.40"
+pydantic = "^2.8.2"
+tenacity = "^8.5.0"
+pyarrow = "^17.0.0"
+pendulum = "^3.0.0"
+pyyaml = "^6.0.1"
+requests = "^2.32.3"
+
+[tool.poetry.group.dev.dependencies]
+responses = "^0.25.7"
+pytest-cov = "^6.1.1"
+pytest-mock = "^3.14.0"
 
 [build-system]
 requires = ["poetry-core"]
