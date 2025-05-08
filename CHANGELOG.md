@@ -20,4 +20,4 @@
 - Added dependencies: `pydantic`, `tenacity`, `pyarrow`, `pendulum`, `requests`, `PyYAML`.
 - Added dev dependency: `responses` (for testing HTTP requests).
 - Updated `README.md` with data fetching instructions, CLI usage, and environment variable details.
-- Updated `src/algo_mvp/fetch.py` to correctly run `cli/fetch_data.py`. 
+- Updated `src/algo_mvp/fetch.py` to correctly run `cli/fetch_data.py`.

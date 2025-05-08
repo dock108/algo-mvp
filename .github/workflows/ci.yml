@@ -38,4 +38,4 @@ jobs:
         poetry run pre-commit run --all-files
     - name: Run tests with coverage
       run: |
-        poetry run pytest --cov=src --cov-fail-under=80 
+        poetry run pytest --cov=src --cov-fail-under=80

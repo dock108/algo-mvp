@@ -3,4 +3,4 @@ symbol: MESM25 # Example Micro E-mini S&P 500, June 2025 contract
 timeframe: 1Min # Tradovate ticks will be resampled to this
 start: "2024-03-01"
 end: "2024-03-01"
-# adjust: not applicable for Tradovate futures in this context 
+# adjust: not applicable for Tradovate futures in this context

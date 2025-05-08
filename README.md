@@ -75,4 +75,4 @@ API credentials must be set as environment variables:
 | Provider  | Granularities (Examples)        | Notes                                         |
 |-----------|---------------------------------|-----------------------------------------------|
 | Alpaca    | 1Min, 5Min, 15Min, 1H, 1Day     | Uses SIP feed (free tier for IEX data)        |
-| Tradovate | 1Min, 5Min, 1H (from ticks)     | Uses demo env; resamples tick data to OHLCV   | 
+| Tradovate | 1Min, 5Min, 1H (from ticks)     | Uses demo env; resamples tick data to OHLCV   |

@@ -3,4 +3,4 @@ symbol: AAPL
 timeframe: 1Day # Example: 1Min, 5Min, 15Min, 1H, 1D
 start: "2023-01-01"
 end: "2023-12-31"
-adjust: true 
+adjust: true
