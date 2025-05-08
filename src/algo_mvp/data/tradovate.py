@@ -1,6 +1,7 @@
 # Tradovate data fetching implementation
 import os
 import sys
+from datetime import timezone
 
 import pandas as pd
 import pendulum
@@ -80,45 +81,62 @@ class TradovateFetcher:
         return response.json()
 
     def _resample_ticks_to_ohlcv(
-        self, ticks_df: pd.DataFrame, timeframe_str: str
+        self, ticks_df_indexed: pd.DataFrame, timeframe_str: str
     ) -> pd.DataFrame:
-        """Resamples tick data to OHLCV DataFrame."""
-        if ticks_df.empty:
+        """Resamples tick data (with timestamp index) to OHLCV DataFrame."""
+        # Input DataFrame is expected to have a datetime index named 'timestamp'
+        if ticks_df_indexed.empty:
             return pd.DataFrame()
 
-        # Ensure timestamp is datetime and set as index
-        ticks_df["timestamp"] = pd.to_datetime(ticks_df["timestamp"])
-        ticks_df = ticks_df.set_index("timestamp")
+        if not isinstance(ticks_df_indexed.index, pd.DatetimeIndex):
+            raise ValueError("Input DataFrame must have a DatetimeIndex.")
+        if ticks_df_indexed.index.name != "timestamp":
+            print(
+                f"Warning: Input DataFrame index name is '{ticks_df_indexed.index.name}', expected 'timestamp'."
+            )
+            # Optionally rename: ticks_df_indexed.index.name = "timestamp"
 
-        # Determine resampling rule (e.g., '1Min', '5Min', '1H')
-        # Pandas resample rule is like 'T' for minutes, 'H' for hours.
-        # Example: '1Min' -> '1T', '1H' -> '1H'
-        # This needs to be robust based on expected timeframe_str format.
-        # For now, assuming a simple mapping if timeframe_str is like "1Min", "60Min", "1H".
-        # A more robust parser like Alpaca's would be better.
+        # Ensure required columns exist
+        if (
+            "price" not in ticks_df_indexed.columns
+            or "size" not in ticks_df_indexed.columns
+        ):
+            raise ValueError("Input DataFrame must contain 'price' and 'size' columns.")
 
-        rule = timeframe_str  # Default to as-is if it matches Pandas rules like '1Min' or 'T'
+        # Determine resampling rule
+        rule = timeframe_str
         if "Min" in timeframe_str:
             rule = timeframe_str.replace("Min", "T")
         elif "H" in timeframe_str and "Min" not in timeframe_str:
-            rule = timeframe_str  # '1H', '2H' should work
-        # Add more rules as needed e.g. for days, weeks, if applicable for tick resampling
+            rule = timeframe_str
 
         if self.verbose:
             print(f"Resampling ticks with rule: {rule}")
 
-        ohlc = ticks_df["price"].resample(rule).ohlc()
-        volume = ticks_df["size"].resample(rule).sum()
+        # Resample using the DataFrame with the datetime index
+        # Use closed='left' and label='left' for standard OHLC behavior
+        ohlc = (
+            ticks_df_indexed["price"].resample(rule, closed="left", label="left").ohlc()
+        )
+        volume = (
+            ticks_df_indexed["size"].resample(rule, closed="left", label="left").sum()
+        )
 
         # Combine OHLC with Volume
         df_ohlcv = pd.concat([ohlc, volume], axis=1)
-        df_ohlcv.rename(
-            columns={"size": "volume"}, inplace=True
-        )  # Ensure volume column is named 'volume'
+        df_ohlcv.rename(columns={"size": "volume"}, inplace=True)
         df_ohlcv = df_ohlcv[["open", "high", "low", "close", "volume"]].copy()
-        df_ohlcv.dropna(
-            subset=["open"], inplace=True
-        )  # Remove intervals with no trades
+        # Drop rows where resampling produced no data (all OHLC are NaN)
+        df_ohlcv.dropna(subset=["open"], inplace=True)
+
+        # Ensure timezone is UTC
+        if df_ohlcv.index.tz is None:
+            # If the original index was naive, assume UTC based on Tradovate standard
+            df_ohlcv.index = df_ohlcv.index.tz_localize("UTC")
+        elif df_ohlcv.index.tz != timezone.utc:
+            df_ohlcv.index = df_ohlcv.index.tz_convert("UTC")
+
+        df_ohlcv.index.name = "timestamp"  # Ensure index name is set
 
         return df_ohlcv
 
@@ -201,7 +219,6 @@ class TradovateFetcher:
                 return pd.DataFrame()
 
             ticks_df = pd.DataFrame(ticks_data_list)
-            # Crucial: Drop rows with missing timestamp, price, or size before resampling
             ticks_df.dropna(subset=["timestamp", "price", "size"], inplace=True)
             if ticks_df.empty:
                 if self.verbose:
@@ -210,7 +227,11 @@ class TradovateFetcher:
                     )
                 return pd.DataFrame()
 
-            # Resample to OHLCV
+            # Convert timestamp and set as index BEFORE resampling
+            ticks_df["timestamp"] = pd.to_datetime(ticks_df["timestamp"])
+            ticks_df.set_index("timestamp", inplace=True)
+
+            # Resample to OHLCV (passing the indexed DataFrame)
             ohlcv_df = self._resample_ticks_to_ohlcv(ticks_df, timeframe_str)
 
             if self.verbose:
