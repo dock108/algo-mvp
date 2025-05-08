@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "algo-mvp"
+version = "0.1.0"
+description = "Lean backtest + paper-trade stack for Mike (Dock108)"
+authors = ["Dock108 <mike@dock108.ai>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10"
+backtrader = "^1.9.78.123"
+vectorbt = "^0.27.3"
+streamlit = "^1.45.0"
+alpaca-trade-api = "^3.2.0"
+sqlalchemy = "^2.0.40"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api" 
