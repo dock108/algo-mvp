@@ -9,9 +9,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+import algo_mvp.data.alpaca  # noqa: F401
+
+# Import the actual modules to ensure coverage while avoiding redefinition errors
+import algo_mvp.data.fetcher  # noqa: F401
+import algo_mvp.data.tradovate  # noqa: F401
+
 # Import the actual classes to mock their __init__
-from algo_mvp.data import alpaca as alpaca_module
-from algo_mvp.data import tradovate as tradovate_module
+from algo_mvp.data import alpaca as alpaca_module  # noqa: F401
+from algo_mvp.data import tradovate as tradovate_module  # noqa: F401
 from algo_mvp.data.fetcher import PARTITION_SIZE_THRESHOLD_BYTES, DataFetcher
 from algo_mvp.models import AlpacaConfig, TradovateConfig
 

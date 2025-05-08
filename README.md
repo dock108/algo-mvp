@@ -50,7 +50,7 @@ python -m algo_mvp.fetch --config configs/sample_equity.yaml
 ```
 
 **Optional flags:**
-- `--force`: Force download even if data for the requested range seems to exist locally.
+- `--force`: Force download even if data for the requested range seems to exist locally. This overwrites any existing data for the specified timeframe and range.
 - `--verbose`: Enable verbose output for more details on the fetching process.
 
 Fetched data is stored in Parquet files under the `data/` directory, organized by provider, symbol, and timeframe (e.g., `data/alpaca/AAPL/1Day.parquet` or `data/alpaca/AAPL/1Day/2023.parquet` if partitioned by year due to size).
