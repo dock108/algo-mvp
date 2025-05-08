@@ -167,3 +167,25 @@ def test_alpaca_fetcher_transform_df_not_needed(
     alpaca_fetcher_instance, sample_alpaca_bars
 ):
     pass
+
+
+def test_alpaca_fetcher_init_missing_keys(alpaca_config_fixture):
+    """Test AlpacaFetcher raises ValueError if API keys are missing."""
+    # Unset env vars if they exist, and don't pass keys to init
+    with patch.dict("os.environ", {}, clear=True):
+        with pytest.raises(
+            ValueError, match="Alpaca API key and secret key must be provided"
+        ):
+            AlpacaFetcher(adjust=alpaca_config_fixture.adjust)
+
+
+def test_alpaca_fetch_invalid_timeframe(alpaca_fetcher_instance, alpaca_config_fixture):
+    """Test fetch with an invalid timeframe string."""
+    fetcher = alpaca_fetcher_instance
+    result = fetcher.fetch(
+        symbol=alpaca_config_fixture.symbol,
+        timeframe_str="1Year",  # Invalid timeframe unit
+        start_date_str=alpaca_config_fixture.start,
+        end_date_str=alpaca_config_fixture.end,
+    )
+    assert result is None  # Should return None on parsing error

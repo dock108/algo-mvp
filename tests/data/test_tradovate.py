@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+import requests
 import responses
 
 from algo_mvp.data.tradovate import TRADOVATE_DEMO_API_URL, TradovateFetcher
@@ -162,3 +163,67 @@ def test_tradovate_resample_ticks_to_ohlcv(tradovate_fetcher_instance):
     assert ohlcv_df.iloc[1]["volume"] == 18
     assert ohlcv_df.index.name == "timestamp"
     assert ohlcv_df.index.tz == timezone.utc
+
+
+def test_tradovate_fetcher_init_missing_token(tradovate_config_fixture):
+    """Test TradovateFetcher raises ValueError if access token is missing."""
+    with patch.dict("os.environ", {"TRADOVATE_CLIENT_ID": "dummy_id"}, clear=True):
+        with pytest.raises(ValueError, match="Tradovate access token must be provided"):
+            TradovateFetcher(client_id="dummy_id")
+
+
+def test_tradovate_fetcher_init_missing_client_id(tradovate_config_fixture, capsys):
+    """Test TradovateFetcher prints warning if client ID is missing but token is present."""
+    with patch.dict(
+        "os.environ", {"TRADOVATE_ACCESS_TOKEN": "dummy_token"}, clear=True
+    ):
+        TradovateFetcher(access_token="dummy_token")
+        captured = capsys.readouterr()
+        assert "Warning: TRADOVATE_CLIENT_ID is not set" in captured.out
+
+
+@responses.activate
+def test_tradovate_fetch_connection_error(
+    tradovate_fetcher_instance, tradovate_config_fixture
+):
+    """Test fetch handling ConnectionError during API request."""
+    fetcher = tradovate_fetcher_instance
+    responses.add(
+        responses.GET,
+        f"{TRADOVATE_DEMO_API_URL}/history",
+        body=requests.exceptions.ConnectionError("Test connection error"),
+    )
+    result = fetcher.fetch(
+        symbol=tradovate_config_fixture.symbol,
+        timeframe_str=tradovate_config_fixture.timeframe,
+        start_date_str=tradovate_config_fixture.start,
+        end_date_str=tradovate_config_fixture.end,
+    )
+    assert result is None
+
+
+def test_tradovate_fetch_invalid_date_format(
+    tradovate_fetcher_instance, tradovate_config_fixture
+):
+    """Test fetch handling errors during start/end date parsing."""
+    fetcher = tradovate_fetcher_instance
+    result = fetcher.fetch(
+        symbol=tradovate_config_fixture.symbol,
+        timeframe_str=tradovate_config_fixture.timeframe,
+        start_date_str="invalid-date-format",
+        end_date_str=tradovate_config_fixture.end,
+    )
+    assert result is None
+
+
+def test_tradovate_resample_missing_columns(tradovate_fetcher_instance):
+    """Test _resample_ticks_to_ohlcv raises ValueError if columns are missing."""
+    fetcher = tradovate_fetcher_instance
+    # Create DataFrame missing the 'price' column
+    tick_data = [{"timestamp": "2024-03-01T10:00:05Z", "size": 10}]
+    ticks_df = pd.DataFrame(tick_data)
+    ticks_df["timestamp"] = pd.to_datetime(ticks_df["timestamp"])
+    ticks_df = ticks_df.set_index("timestamp")
+
+    with pytest.raises(ValueError, match="must contain 'price' and 'size' columns"):
+        fetcher._resample_ticks_to_ohlcv(ticks_df, "1Min")
