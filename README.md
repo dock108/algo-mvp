@@ -77,6 +77,15 @@ API credentials must be set as environment variables:
 | Alpaca    | 1Min, 5Min, 15Min, 1H, 1Day     | Uses SIP feed (free tier for IEX data)        |
 | Tradovate | 1Min, 5Min, 1H (from ticks)     | Uses demo env; resamples tick data to OHLCV   |
 
+## Live Trading (skeleton)
+
+This project provides a basic live trading engine skeleton. It can load Backtrader strategies, connect to a broker adapter (currently a mock adapter), and be controlled via a CLI.
+
+**CLI Demo:**
+```bash
+python -m algo_mvp.live --config configs/live_sample.yaml
+```
+
 ## Live Trading (Experimental)
 
 This project includes an experimental live trading bridge using Backtrader and a custom integration with Alpaca built on the modern `alpaca-py` SDK. It supports paper and live trading.
