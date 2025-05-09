@@ -42,6 +42,22 @@
 
 ## [0.4.0] – 2025-05-08
 ### Added
+- LiveRunner skeleton with mock broker adapter.
+- CLI `python -m algo_mvp.live`.
+- Sample YAML config `configs/live_sample.yaml`.
+- Pydantic models for live configuration in `src/algo_mvp/live/config.py`.
+- Basic unit tests for `LiveRunner` and `MockBrokerAdapter`.
+
+### Changed
+- Project version bumped to 0.4.0 in `pyproject.toml`.
+
+## [0.3.2] – 2025-05-08
+### Added
+- Custom AlpacaStore / AlpacaData / AlpacaBroker built on alpaca-py.
+- Full async tests with mocked REST & WebSocket streams.
+
+## [0.3.1] – 2025-05-08
+### Added
 - Backtrader live bridge for Alpaca (paper/live via `AlpacaStore`).
 - SQLite trade logger (`algo_mvp.live.logger`) with `orders`, `trades`, and `equity_curve` tables.
 - Equity snapshot logging via `TradeLogger.log_equity_snapshot`.
@@ -50,9 +66,6 @@
 - CLI `python -m algo_mvp.live` updated with `--kill-time` flag.
 - Placeholder metrics calculation module (`algo_mvp.live.metrics`).
 - Sample Alpaca live config (`configs/live_spy.yaml`).
-- LiveRunner skeleton with mock broker adapter.
-- CLI `python -m algo_mvp.live`.
-- Sample YAML config.
 
 ### Changed
 - Refactored broker logic into `algo_mvp.live.alpaca`.
@@ -66,8 +79,3 @@
 
 ### Fixed
 - Persistent linting errors in various files.
-
-## [0.4.1] – 2025-05-08
-### Added
-- Custom AlpacaStore / AlpacaData / AlpacaBroker built on alpaca-py.
-- Full async tests with mocked REST & WebSocket streams.

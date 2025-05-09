@@ -1,16 +1,39 @@
 # Alpaca data fetching implementation
+import asyncio
+import datetime
 import os
 import sys
+from typing import Optional
 
 import pandas as pd
 import pendulum
-from alpaca_trade_api.rest import REST, APIError, TimeFrame, TimeFrameUnit
+
+# from alpaca_trade_api.rest import REST, APIError, TimeFrame, TimeFrameUnit
 from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
+    wait_fixed,
 )
+
+
+# Placeholder for actual APIError if alpaca_trade_api is not imported
+class APIError(Exception):
+    pass
+
+
+# Placeholders for TimeFrame and TimeFrameUnit if alpaca_trade_api is not imported
+class TimeFrame:
+    Day = "1Day"
+    Hour = "1Hour"
+    Minute = "1Min"
+
+
+class TimeFrameUnit:
+    Day = "Day"
+    Hour = "Hour"
+    Minute = "Minute"
 
 
 # Define a more specific retry condition for typical Alpaca API errors
