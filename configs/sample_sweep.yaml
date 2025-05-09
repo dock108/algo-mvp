@@ -1,0 +1,10 @@
+provider: alpaca
+symbol: MESM25
+timeframe: 1Min
+strategy: vwap_atr
+params:
+  band_mult: [1.5, 2.0, 2.5]
+  atr_len: [10, 14, 20]
+cash: 2500
+commission: 0.0
+metrics: [sharpe, max_drawdown, CAGR]

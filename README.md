@@ -76,3 +76,56 @@ API credentials must be set as environment variables:
 |-----------|---------------------------------|-----------------------------------------------|
 | Alpaca    | 1Min, 5Min, 15Min, 1H, 1Day     | Uses SIP feed (free tier for IEX data)        |
 | Tradovate | 1Min, 5Min, 1H (from ticks)     | Uses demo env; resamples tick data to OHLCV   |
+
+## Back-testing
+
+This project includes a vectorbt-powered backtesting engine that can run single or grid parameter sweeps based on YAML configuration files.
+
+### Configuration
+
+Backtests are configured using YAML files. A sample configuration can be found in the `configs/` directory:
+- `configs/sample_sweep.yaml`
+
+Key configuration options include:
+- `provider`: `alpaca` or `tradovate` (data source)
+- `symbol`: The ticker symbol to backtest
+- `timeframe`: Data granularity (e.g., `1Min`, `1Day`)
+- `strategy`: Strategy name (e.g., `vwap_atr`, `three_day_momo`)
+- `params`: Strategy parameters (scalar values for single runs, lists for grid sweeps)
+- `cash`: Initial cash amount
+- `commission`: Commission per trade
+- `metrics`: Performance metrics to calculate (e.g., `sharpe`, `max_drawdown`, `cagr`)
+
+### CLI Usage
+
+To run a backtest, use the following command:
+
+```bash
+poetry run python -m algo_mvp.backtest --config configs/sample_sweep.yaml
+```
+
+**Optional flags:**
+- `--output-dir`: Custom output directory for backtest results
+- `--verbose`: Enable verbose output for more details on the backtesting process
+
+### Strategies
+
+The following strategies are included:
+
+1. **VWAP-ATR** (`vwap_atr`): Uses Volume Weighted Average Price (VWAP) and Average True Range (ATR) to generate trading signals.
+   - Parameters:
+     - `band_mult`: Multiplier for ATR bands around VWAP
+     - `atr_len`: Period for ATR calculation
+
+2. **Three Day Momentum** (`three_day_momo`): Looks for strong directional moves over a three-day period and enters in the direction of the momentum with ATR-based stops.
+   - Parameters:
+     - `band_mult`: Multiplier for ATR stop bands
+     - `atr_len`: Period for ATR calculation
+
+### Backtest Results
+
+Backtest results are stored in the `backtests/` directory, organized by strategy, symbol, and timestamp. Each backtest run produces:
+- `metrics.csv`: Summary of performance metrics for all parameter combinations
+- `equity_{run_id}.csv`: Equity curve for each run
+- `plot_{run_id}.html`: Interactive vectorbt plot for each run
+- A copy of the configuration file used for the backtest

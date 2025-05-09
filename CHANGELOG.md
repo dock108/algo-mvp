@@ -21,3 +21,21 @@
 - Added dev dependency: `responses` (for testing HTTP requests).
 - Updated `README.md` with data fetching instructions, CLI usage, and environment variable details.
 - Updated `src/algo_mvp/fetch.py` to correctly run `cli/fetch_data.py`.
+
+## [0.3.0] – 2025-05-08
+### Added
+- Vectorbt back-test engine with YAML-driven parameter sweeps.
+- CLI `python -m algo_mvp.backtest --config <config_path> [--output-dir <path>] [--verbose]`.
+- Two reference strategies (`vwap_atr`, `three_day_momo`).
+- Parameter grid expansion for efficient backtesting of multiple parameter combinations.
+- Rich output formatting with progress bars and summary tables.
+- Comprehensive performance metrics (Sharpe, CAGR, Max Drawdown, Win Rate, Expectancy).
+- Artifact storage including equity curves, interactive plots, and metrics summaries.
+- Pydantic validation for backtest configuration.
+- Unit tests for engine, strategies, and CLI with >80% coverage.
+
+### Changed
+- Project version bumped to 0.3.0 in `pyproject.toml`.
+- Added dependencies: `vectorbt ~=0.26.0`, `plotly`, `rich`, `tqdm`.
+- Updated `README.md` with backtesting instructions and strategy documentation.
+- Updated `.pre-commit-config.yaml` with end-of-file-fixer hook.

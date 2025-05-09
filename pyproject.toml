@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "algo-mvp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Lean backtest + paper-trade stack for Mike (Dock108)"
 authors = ["Dock108 <mike@dock108.ai>"]
 readme = "README.md"
@@ -8,7 +8,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = ">=3.10"
 backtrader = "^1.9.78.123"
-vectorbt = "^0.27.3"
+vectorbt = "^0.26.0"
 streamlit = "^1.45.0"
 alpaca-trade-api = "^3.2.0"
 sqlalchemy = "^2.0.40"
@@ -18,6 +18,9 @@ pyarrow = "^17.0.0"
 pendulum = "^3.0.0"
 pyyaml = "^6.0.1"
 requests = "^2.32.3"
+plotly = "^5.24.0"
+rich = "^13.7.1"
+tqdm = "^4.66.4"
 
 [tool.poetry.group.dev.dependencies]
 responses = "^0.25.7"
