@@ -1,7 +1,7 @@
-from typing import Any, Dict, List, Literal
+from typing import Literal
 
 import pendulum
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, validator
 
 
 class BaseConfig(BaseModel):
@@ -58,49 +58,3 @@ class TradovateConfig(BaseConfig):
 
 # A union type for config loading, or the CLI can load the appropriate one based on 'provider' field.
 # For now, the CLI will inspect the 'provider' field first.
-
-
-class RunnerConfig(BaseModel):
-    name: str
-    provider: str  # mock, alpaca, tradovate, etc.
-    strategy: str  # Dotted path: module.submodule:ClassName
-    params: Dict[str, Any] = Field(default_factory=dict)
-    symbol: str
-    timeframe: str  # e.g., 1Min, 5Min, 1H, 1D
-
-    @validator("strategy")
-    def strategy_format(cls, value):
-        if ":" not in value or "." not in value.split(":")[0]:
-            raise ValueError("Strategy must be in 'module.submodule:ClassName' format.")
-        return value
-
-
-class LiveTradingConfig(BaseModel):
-    runners: List[RunnerConfig]
-
-
-# Example usage:
-# if __name__ == '__main__':
-#     yaml_data = """
-# runners:
-#   - name: mes_demo
-#     provider: mock
-#     strategy: algo_mvp.backtest.strategies.vwap_atr:VWAPATRStrategy
-#     params:
-#       band_mult: 2
-#       atr_len: 14
-#     symbol: MESM25
-#     timeframe: 1Min
-#   - name: cl_test
-#     provider: mock
-#     strategy: some.other.strategy:AnotherStrategy
-#     params:
-#       lookback: 50
-#     symbol: CLZ25
-#     timeframe: 5Min
-# """
-#     import yaml
-#     data = yaml.safe_load(yaml_data)
-#     config = LiveTradingConfig(**data)
-#     print(config.model_dump_json(indent=2))
-#     print(f"Strategy for first runner: {config.runners[0].strategy}")

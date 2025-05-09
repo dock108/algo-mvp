@@ -50,9 +50,6 @@
 - CLI `python -m algo_mvp.live` updated with `--kill-time` flag.
 - Placeholder metrics calculation module (`algo_mvp.live.metrics`).
 - Sample Alpaca live config (`configs/live_spy.yaml`).
-- LiveRunner skeleton with mock broker adapter.
-- CLI `python -m algo_mvp.live`.
-- Sample YAML config.
 
 ### Changed
 - Refactored broker logic into `algo_mvp.live.alpaca`.

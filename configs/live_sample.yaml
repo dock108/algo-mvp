@@ -1,9 +1,0 @@
-runners:
-  - name: mes_demo
-    provider: mock
-    strategy: algo_mvp.backtest.strategies.vwap_atr:VWAPATRStrategy
-    params:
-      band_mult: 2
-      atr_len: 14
-    symbol: MESM25
-    timeframe: 1Min
