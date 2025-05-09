@@ -12,6 +12,8 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.12"]
+    env:
+      OPENBLAS_NUM_THREADS: 1  # Prevent memory issues with vectorbt
 
     steps:
     - uses: actions/checkout@v4

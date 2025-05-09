@@ -125,8 +125,8 @@ class ThreeDayMomoStrategy(Strategy):
                         break
 
         # Clean up signals (no entry after entry without exit)
-        entries_array, exits_array = vbt.signals.nb.clean_enex_1d(
-            entries.values, exits.values
+        entries_array, exits_array = vbt.signals.nb.clean_enex_1d_nb(
+            entries.values, exits.values, entry_first=True
         )
 
         return {

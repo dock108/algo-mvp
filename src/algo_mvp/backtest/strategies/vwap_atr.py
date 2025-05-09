@@ -76,7 +76,9 @@ class VwapAtrStrategy(Strategy):
         )
 
         # Clean up signals (no entry after entry without exit)
-        entries, exits = vbt.signals.nb.clean_enex_1d(entries.values, exits.values)
+        entries, exits = vbt.signals.nb.clean_enex_1d_nb(
+            entries.values, exits.values, entry_first=True
+        )
 
         return {
             "entries": pd.Series(entries, index=data.index),
