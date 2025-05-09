@@ -39,3 +39,35 @@
 - Added dependencies: `vectorbt ~=0.26.0`, `plotly`, `rich`, `tqdm`.
 - Updated `README.md` with backtesting instructions and strategy documentation.
 - Updated `.pre-commit-config.yaml` with end-of-file-fixer hook.
+
+## [0.4.0] – 2025-05-08
+### Added
+- Backtrader live bridge for Alpaca (paper/live via `AlpacaStore`).
+- SQLite trade logger (`algo_mvp.live.logger`) with `orders`, `trades`, and `equity_curve` tables.
+- Equity snapshot logging via `TradeLogger.log_equity_snapshot`.
+- Session summary logging (`TradeLogger.on_session_summary`) for daily metrics.
+- Live runner orchestrator (`algo_mvp.live.runner`) with heartbeat, session timing, kill-time, and max daily loss checks.
+- CLI `python -m algo_mvp.live` updated with `--kill-time` flag.
+- Placeholder metrics calculation module (`algo_mvp.live.metrics`).
+- Sample Alpaca live config (`configs/live_spy.yaml`).
+- LiveRunner skeleton with mock broker adapter.
+- CLI `python -m algo_mvp.live`.
+- Sample YAML config.
+
+### Changed
+- Refactored broker logic into `algo_mvp.live.alpaca`.
+- Renamed `TradeLogger` methods (`on_order` -> `on_order_notify`, etc.).
+- Updated dependencies: added `alpaca-py`.
+- Updated `.pre-commit-config.yaml` with `sqlfmt` hook.
+- Updated `.github/workflows/ci.yml` with `SQLITE_SYNCHRONOUS=OFF` env var.
+
+### Removed
+- Generic `broker.py` (replaced by `alpaca.py`, Tradovate logic deferred to Issue 4b).
+
+### Fixed
+- Persistent linting errors in various files.
+
+## [0.4.1] – 2025-05-08
+### Added
+- Custom AlpacaStore / AlpacaData / AlpacaBroker built on alpaca-py.
+- Full async tests with mocked REST & WebSocket streams.

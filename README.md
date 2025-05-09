@@ -77,6 +77,46 @@ API credentials must be set as environment variables:
 | Alpaca    | 1Min, 5Min, 15Min, 1H, 1Day     | Uses SIP feed (free tier for IEX data)        |
 | Tradovate | 1Min, 5Min, 1H (from ticks)     | Uses demo env; resamples tick data to OHLCV   |
 
+## Live Trading (Experimental)
+
+This project includes an experimental live trading bridge using Backtrader and a custom integration with Alpaca built on the modern `alpaca-py` SDK. It supports paper and live trading.
+
+### Configuration
+
+Live trading configuration is done via YAML files, similar to data fetching and backtesting. See `configs/live_spy.yaml` for an example.
+
+Key configuration options include:
+- `provider`: Currently only `alpaca` is supported by the custom bridge.
+- `symbol`: Ticker symbol for trading.
+- `timeframe`: Data timeframe (currently `1Min` for the custom Alpaca bridge).
+- `strategy`: Strategy name (must be compatible with Backtrader).
+- `strategy_params`: Parameters for the chosen strategy.
+- `runtime`: Runtime settings like `max_daily_loss_pct`, `session_start`, `session_end`, `kill_time`, `equity_snapshot_freq_sec`.
+
+### CLI Usage
+
+```bash
+poetry run python -m algo_mvp.live --config configs/live_spy.yaml [--paper | --live] [--db <path>] [--kill-time HH:MM] [--verbose]
+```
+
+**Arguments:**
+- `--config`: Path to the live config file (required).
+- `--paper`: Run in paper trading mode (default).
+- `--live`: Run in live trading mode.
+- `--db`: Path to the SQLite database for logging trades, orders, and equity (default: `./databases/algo.db`).
+- `--kill-time`: Optional time (HH:MM) to stop the runner early.
+- `--verbose`: Enable detailed logging.
+
+### Trade Logging
+
+Live trading activity (orders, trades, equity snapshots, daily summaries) is logged to a SQLite database specified by the `--db` argument. The schema is defined in `databases/schema.sql`.
+
+### Important Notes
+- **Credentials:** Alpaca API keys (`ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`) must be set as environment variables.
+- **Market Data:** The custom `AlpacaData` feed uses the `StockDataStream` from `alpaca-py`. Ensure your Alpaca account has the necessary market data subscriptions (e.g., IEX is free, SIP may require paid plans).
+- **Brokerage:** The custom `AlpacaBroker` interacts with the Alpaca Trading API via `alpaca-py`.
+- **Risk:** Live trading involves real financial risk. Use with extreme caution, especially with real money (`--live` flag). Start with paper trading (`--paper`) extensively.
+
 ## Back-testing
 
 This project includes a vectorbt-powered backtesting engine that can run single or grid parameter sweeps based on YAML configuration files.
@@ -129,3 +169,23 @@ Backtest results are stored in the `backtests/` directory, organized by strategy
 - `equity_{run_id}.csv`: Equity curve for each run
 - `plot_{run_id}.html`: Interactive vectorbt plot for each run
 - A copy of the configuration file used for the backtest
+
+## Live Trading (skeleton)
+
+A new live trading engine skeleton has been added. This engine can load Backtrader strategies, connect to a broker adapter (currently a `MockBrokerAdapter`), and has clean start/stop hooks.
+
+### CLI Usage (Skeleton)
+
+To run the live trading engine with a sample configuration:
+
+```bash
+python -m algo_mvp.live --config configs/live_sample.yaml
+```
+
+This will start all runners defined in the `live_sample.yaml` config, print a status table every 10 seconds, and allow graceful shutdown with Ctrl-C.
+
+### Future Enhancements
+
+- Integration with live brokers (e.g., Alpaca, Tradovate).
+- More sophisticated data feed handling.
+- Expanded CLI options and runner management.
