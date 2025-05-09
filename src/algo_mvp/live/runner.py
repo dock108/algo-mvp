@@ -145,7 +145,9 @@ class LiveRunner:
             self.cerebro.runstop()  # Request graceful stop
 
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=10)  # Wait for thread to finish
+            self._thread.join(
+                timeout=5
+            )  # Wait for thread to finish, adjusted timeout to 5s
             if self._thread.is_alive():
                 self._log(
                     "Thread did not stop in time.", level=logging.ERROR

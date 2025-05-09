@@ -1,13 +1,13 @@
 from typing import Any, Dict, List
 
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, validator
 
 
 class RunnerConfig(BaseModel):
     name: str
     provider: str
     strategy: str
-    params: Dict[str, Any]
+    params: Dict[str, Any] = {}
     symbol: str
     timeframe: str
 
@@ -19,4 +19,4 @@ class RunnerConfig(BaseModel):
 
 
 class LiveConfig(BaseModel):
-    runners: List[RunnerConfig]
+    runners: List[RunnerConfig] = Field(default_factory=list)

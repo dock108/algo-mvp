@@ -6,6 +6,7 @@ import sys
 from typing import Optional
 
 import pandas as pd
+import pendulum
 
 # from alpaca_trade_api.rest import REST, APIError, TimeFrame, TimeFrameUnit
 from tenacity import (
