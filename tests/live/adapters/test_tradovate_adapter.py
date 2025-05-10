@@ -14,7 +14,7 @@ from algo_mvp.live.adapters.tradovate import (
     TRADOVATE_WS_URL,
     TradovateBrokerAdapter,
 )
-from algo_mvp.live.models import Fill, Order
+from algo_mvp.live.models import Fill, Order, Position
 
 # Configure a logger for the test file itself if needed for test-specific logging
 test_file_logger = logging.getLogger(__name__)
@@ -1139,29 +1139,43 @@ async def test_cancel_order_fails(connected_adapter, mock_http_client):
 
     mock_http_client.return_value.request.side_effect = custom_request_mock
 
-    try:
-        result = await adapter.cancel_order(order_id_to_cancel)
-        assert result is False  # Expecting False on failure
+    # --- Store original asyncio.sleep before patching ---
+    original_asyncio_sleep = asyncio.sleep
 
-        expected_headers = {}
-        if adapter.access_token_details and not adapter.access_token_details.is_expired:
-            expected_headers["Authorization"] = (
-                f"Bearer {adapter.access_token_details.accessToken}"
+    async def mock_actual_short_sleep(delay):
+        # Call the original asyncio.sleep for a very short duration
+        await original_asyncio_sleep(0.001)
+
+    with patch("asyncio.sleep", new=mock_actual_short_sleep):
+        try:
+            result = await adapter.cancel_order(order_id_to_cancel)
+            assert result is False  # Expecting False on failure
+
+            expected_headers = {}
+            if (
+                adapter.access_token_details
+                and not adapter.access_token_details.is_expired
+            ):
+                expected_headers["Authorization"] = (
+                    f"Bearer {adapter.access_token_details.accessToken}"
+                )
+
+            # Check call count due to tenacity retries
+            assert (
+                mock_http_client.return_value.request.call_count == 4
+            )  # stop_after_attempt(4)
+
+            # Check that any of the calls were made with the correct parameters
+            mock_http_client.return_value.request.assert_any_call(
+                "DELETE",
+                f"/order/cancelorder/{order_id_to_cancel}",
+                headers=expected_headers,
             )
-
-        # Check call count due to tenacity retries
-        assert (
-            mock_http_client.return_value.request.call_count == 4
-        )  # stop_after_attempt(4)
-
-        # Check that any of the calls were made with the correct parameters
-        mock_http_client.return_value.request.assert_any_call(
-            "DELETE",
-            f"/order/cancelorder/{order_id_to_cancel}",
-            headers=expected_headers,
-        )
-    finally:
-        mock_http_client.return_value.request.side_effect = original_request_side_effect
+        finally:
+            mock_http_client.return_value.request.side_effect = (
+                original_request_side_effect
+            )
+            # asyncio.sleep is restored automatically by with patch exiting
 
 
 # --- Data Retrieval Tests ---
@@ -1418,7 +1432,9 @@ async def test_get_cash_fails_to_fetch_account_list(
 ):
     adapter = connected_adapter
     # adapter._account_id is set by connected_adapter
-    # adapter._cash is initially whatever connected_adapter sets (e.g., {"USD": 100000.0})
+    # Explicitly set adapter._cash to ensure it's a dict for this test, overriding any prior incorrect state.
+    # This mirrors the expected state after connected_adapter's connect() call if successful.
+    adapter._cash = {"USD": 100000.0}
     initial_cash_state = adapter._cash.copy()  # Capture initial state
 
     original_request_side_effect = mock_http_client.return_value.request.side_effect
@@ -1449,30 +1465,405 @@ async def test_get_cash_fails_to_fetch_account_list(
 
     mock_http_client.return_value.request.side_effect = custom_request_mock
 
+    # --- Store original asyncio.sleep before patching ---
+    original_asyncio_sleep = asyncio.sleep
+
+    async def mock_actual_short_sleep(delay):
+        # Call the original asyncio.sleep for a very short duration
+        await original_asyncio_sleep(0.001)
+
+    with patch("asyncio.sleep", new=mock_actual_short_sleep):
+        try:
+            with caplog.at_level(
+                logging.ERROR, logger="algo_mvp.live.adapters.tradovate"
+            ):
+                retrieved_cash = await adapter.get_cash()
+
+            # Should return the initial cash state because the new fetch failed
+            assert retrieved_cash == initial_cash_state
+            assert (
+                adapter._cash == initial_cash_state
+            )  # Internal state should also remain unchanged
+
+            assert any(
+                "Failed to get cash balance" in message for message in caplog.messages
+            )
+
+            # Check that /account/list was called (and retried by tenacity)
+            assert (
+                mock_http_client.return_value.request.call_count == 4
+            )  # stop_after_attempt(4)
+            mock_http_client.return_value.request.assert_any_call(
+                "GET", "/account/list", headers=ANY
+            )
+
+        finally:
+            mock_http_client.return_value.request.side_effect = (
+                original_request_side_effect
+            )
+            # asyncio.sleep is restored automatically by with patch exiting
+
+
+@pytest.mark.asyncio
+async def test_get_positions_successful(connected_adapter, mock_http_client):
+    adapter = connected_adapter
+    assert (
+        adapter._account_id is not None
+    ), "_account_id not set by connected_adapter fixture"
+
+    tradovate_position_data = [
+        {
+            "accountId": adapter._account_id,
+            "contractId": 12345,
+            "timestamp": "2023-10-27T10:00:00Z",
+            "netPos": 5,
+            "avgEntryPrice": 4500.25,
+            "contract": {"id": 12345, "name": "ESZ23"},
+        },
+        {
+            "accountId": adapter._account_id,
+            "contractId": 67890,
+            "timestamp": "2023-10-27T10:05:00Z",
+            "netPos": -2,
+            "avgEntryPrice": 150.75,
+            "contract": {"id": 67890, "name": "CLF24"},
+        },
+        {
+            "accountId": 99999,  # Different account
+            "contractId": 11111,
+            "timestamp": "2023-10-27T10:05:00Z",
+            "netPos": 10,
+            "avgEntryPrice": 1.00,
+            "contract": {"id": 11111, "name": "OTHERACC"},
+        },
+    ]
+
+    original_request_side_effect = mock_http_client.return_value.request.side_effect
+    mock_http_client.return_value.request.reset_mock()
+
+    async def custom_request_mock(method, endpoint, headers=None, json=None, **kwargs):
+        if endpoint == "/position/list" and method == "GET":
+            mock_response = AsyncMock(status_code=200)
+            mock_response.json = MagicMock(return_value=tradovate_position_data)
+            mock_response.raise_for_status = MagicMock()
+            return mock_response
+        # Fallback for other calls like /account/list if connect() is somehow re-triggered
+        elif endpoint == "/account/list" and method == "GET":
+            mock_response = AsyncMock(status_code=200)
+            mock_response.json = MagicMock(
+                return_value=[
+                    {
+                        "id": adapter._account_id,
+                        "name": "TestAccount",
+                        "balance": 100000,
+                        "userId": TEST_USER_ID,
+                        "buyingPower": 100000,
+                    }
+                ]
+            )
+            mock_response.raise_for_status = MagicMock()
+            return mock_response
+        error_response = AsyncMock(status_code=404)
+        error_response.json = MagicMock(
+            return_value={"error": "Not Found in get_positions test"}
+        )
+        error_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "Not Found", request=MagicMock(), response=error_response
+            )
+        )
+        return error_response
+
+    mock_http_client.return_value.request.side_effect = custom_request_mock
+
+    try:
+        retrieved_positions = await adapter.get_positions()
+
+        assert len(retrieved_positions) == 2
+        assert adapter._positions == retrieved_positions
+
+        pos1 = next(p for p in retrieved_positions if p.symbol == "ESZ23")
+        assert pos1.qty == 5
+        assert pos1.avg_entry_price == 4500.25
+
+        pos2 = next(p for p in retrieved_positions if p.symbol == "CLF24")
+        assert pos2.qty == -2
+        assert pos2.avg_entry_price == 150.75
+
+        expected_headers = {}
+        if adapter.access_token_details and not adapter.access_token_details.is_expired:
+            expected_headers["Authorization"] = (
+                f"Bearer {adapter.access_token_details.accessToken}"
+            )
+
+        mock_http_client.return_value.request.assert_called_once_with(
+            "GET", "/position/list", headers=expected_headers
+        )
+    finally:
+        mock_http_client.return_value.request.side_effect = original_request_side_effect
+
+
+@pytest.mark.asyncio
+async def test_get_positions_empty(connected_adapter, mock_http_client):
+    adapter = connected_adapter
+    assert adapter._account_id is not None
+
+    empty_position_data = [
+        {
+            "accountId": 99999,  # Position for another account
+            "contractId": 11111,
+            "timestamp": "2023-10-27T10:05:00Z",
+            "netPos": 10,
+            "avgEntryPrice": 1.00,
+            "contract": {"id": 11111, "name": "OTHERACC"},
+        }
+    ]
+    # Or simply an empty list if the API returns nothing for the user,
+    # and the adapter filters by account_id correctly
+    # empty_position_data = []
+
+    original_request_side_effect = mock_http_client.return_value.request.side_effect
+    mock_http_client.return_value.request.reset_mock()
+
+    async def custom_request_mock(method, endpoint, headers=None, json=None, **kwargs):
+        if endpoint == "/position/list" and method == "GET":
+            mock_response = AsyncMock(status_code=200)
+            mock_response.json = MagicMock(
+                return_value=empty_position_data
+            )  # Could also be just []
+            mock_response.raise_for_status = MagicMock()
+            return mock_response
+        elif endpoint == "/account/list" and method == "GET":
+            mock_response = AsyncMock(status_code=200)
+            mock_response.json = MagicMock(
+                return_value=[
+                    {
+                        "id": adapter._account_id,
+                        "name": "TestAccount",
+                        "balance": 100000,
+                        "userId": TEST_USER_ID,
+                        "buyingPower": 100000,
+                    }
+                ]
+            )
+            mock_response.raise_for_status = MagicMock()
+            return mock_response
+        error_response = AsyncMock(status_code=404)
+        error_response.json = MagicMock(return_value={"error": "Not Found"})
+        error_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "Not Found", request=MagicMock(), response=error_response
+            )
+        )
+        return error_response
+
+    mock_http_client.return_value.request.side_effect = custom_request_mock
+
+    try:
+        adapter._positions = [
+            Position(symbol="dummy", qty=1, avg_entry_price=100)
+        ]  # Pre-set some positions
+        retrieved_positions = await adapter.get_positions()
+
+        assert len(retrieved_positions) == 0
+        assert adapter._positions == retrieved_positions
+        assert adapter._positions == []
+
+        mock_http_client.return_value.request.assert_called_once_with(
+            "GET", "/position/list", headers=ANY
+        )
+    finally:
+        mock_http_client.return_value.request.side_effect = original_request_side_effect
+
+
+@pytest.mark.asyncio
+async def test_get_positions_api_error(connected_adapter, mock_http_client, caplog):
+    adapter = connected_adapter
+    assert adapter._account_id is not None
+
+    # Pre-set some positions to test if they are preserved on API error
+    initial_positions = [
+        Position(symbol="ESZ23", qty=2, avg_entry_price=4500.00),
+        Position(symbol="NQU23", qty=-1, avg_entry_price=15000.00),
+    ]
+    adapter._positions = initial_positions.copy()
+
+    original_request_side_effect = mock_http_client.return_value.request.side_effect
+    mock_http_client.return_value.request.reset_mock()
+
+    http_error = httpx.HTTPStatusError(
+        "Server Error", request=MagicMock(), response=AsyncMock(status_code=500)
+    )
+
+    async def custom_request_mock(method, endpoint, headers=None, json=None, **kwargs):
+        if endpoint == "/position/list" and method == "GET":
+            mock_response = AsyncMock(status_code=500)
+            mock_response.json = MagicMock(
+                return_value={"error": "Internal Server Error"}
+            )
+            mock_response.raise_for_status = MagicMock(side_effect=http_error)
+            return mock_response
+        elif endpoint == "/account/list" and method == "GET":
+            mock_response = AsyncMock(status_code=200)
+            mock_response.json = MagicMock(
+                return_value=[
+                    {
+                        "id": adapter._account_id,
+                        "name": "TestAccount",
+                        "balance": 100000,
+                        "userId": TEST_USER_ID,
+                        "buyingPower": 100000,
+                    }
+                ]
+            )
+            mock_response.raise_for_status = MagicMock()
+            return mock_response
+        error_response = AsyncMock(status_code=404)
+        error_response.json = MagicMock(return_value={"error": "Not Found"})
+        error_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "Not Found", request=MagicMock(), response=error_response
+            )
+        )
+        return error_response
+
+    mock_http_client.return_value.request.side_effect = custom_request_mock
+
     try:
         with caplog.at_level(logging.ERROR, logger="algo_mvp.live.adapters.tradovate"):
-            retrieved_cash = await adapter.get_cash()
+            retrieved_positions = await adapter.get_positions()
 
-        # Should return the initial cash state because the new fetch failed
-        assert retrieved_cash == initial_cash_state
         assert (
-            adapter._cash == initial_cash_state
-        )  # Internal state should also remain unchanged
+            retrieved_positions == initial_positions
+        )  # Should return cached positions
+        assert (
+            adapter._positions == initial_positions
+        )  # Internal state should remain unchanged
 
-        assert any(
-            "Failed to get cash balance" in message for message in caplog.messages
-        )
+        assert any("Failed to get positions" in message for message in caplog.messages)
 
-        # Check that /account/list was called (and retried by tenacity)
+        # Check that /position/list was called (and retried by tenacity)
         assert (
             mock_http_client.return_value.request.call_count == 4
-        )  # stop_after_attempt(4)
+        )  # stop_after_attempt(4) in _make_request
         mock_http_client.return_value.request.assert_any_call(
-            "GET", "/account/list", headers=ANY
+            "GET", "/position/list", headers=ANY
         )
+    finally:
+        mock_http_client.return_value.request.side_effect = original_request_side_effect
+
+
+@pytest.mark.asyncio
+async def test_get_positions_fetches_account_id_if_not_set(
+    adapter, mock_http_client, caplog
+):
+    # Use the basic 'adapter' fixture which is not auto-connected
+    adapter._account_id = None  # Ensure it starts as None
+    adapter._positions = []  # Start with empty positions
+
+    expected_account_id = 67890
+    tradovate_position_data = [
+        {
+            "accountId": expected_account_id,
+            "contractId": 123,
+            "netPos": 10,
+            "avgEntryPrice": 100.0,
+            "contract": {"id": 123, "name": "SYMTEST"},
+        }
+    ]
+
+    # Mock token response (needed if _get_initial_account_data triggers _make_request -> _get_access_token)
+    token_response_dict = {
+        "accessToken": "token_for_pos_test",
+        "userId": TEST_USER_ID,
+        "expirationTime": (datetime.now(timezone.utc) + timedelta(hours=1))
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "userStatus": "Authorized",
+        "name": TEST_USERNAME,
+        "hasLive": False,
+    }
+    mock_http_client.return_value.post.return_value.status_code = 200
+    mock_http_client.return_value.post.return_value.json.return_value = (
+        token_response_dict
+    )
+    mock_http_client.return_value.post.return_value.raise_for_status = (
+        MagicMock()
+    )  # Ensure no error on post
+
+    # Mock account list response (for _get_initial_account_data)
+    account_list_response = [
+        {
+            "id": expected_account_id,
+            "name": "FetchedAcc",
+            "balance": 50000,
+            "userId": TEST_USER_ID,
+            "buyingPower": 50000,
+        }
+    ]
+
+    original_request_side_effect = mock_http_client.return_value.request.side_effect
+    mock_http_client.return_value.request.reset_mock()
+
+    # We expect calls to /account/list (to get account_id) and then /position/list
+    async def custom_request_mock(method, endpoint, headers=None, json=None, **kwargs):
+        if endpoint == "/account/list" and method == "GET":
+            mock_response = AsyncMock(status_code=200)
+            mock_response.json = MagicMock(return_value=account_list_response)
+            mock_response.raise_for_status = MagicMock()
+            return mock_response
+        elif endpoint == "/position/list" and method == "GET":
+            mock_response = AsyncMock(status_code=200)
+            # Ensure that this mock is only called *after* _account_id would have been set
+            assert (
+                adapter._account_id == expected_account_id
+            ), "_account_id not set before /position/list call"
+            mock_response.json = MagicMock(return_value=tradovate_position_data)
+            mock_response.raise_for_status = MagicMock()
+            return mock_response
+        error_response = AsyncMock(status_code=404)
+        error_response.json = MagicMock(return_value={"error": "Not Found"})
+        error_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "Not Found", request=MagicMock(), response=error_response
+            )
+        )
+        return error_response
+
+    mock_http_client.return_value.request.side_effect = custom_request_mock
+
+    try:
+        retrieved_positions = await adapter.get_positions()
+
+        assert adapter._account_id == expected_account_id
+        assert len(retrieved_positions) == 1
+        assert retrieved_positions[0].symbol == "SYMTEST"
+        assert retrieved_positions[0].qty == 10
+        assert adapter._positions == retrieved_positions
+
+        # Check calls: at least one to /account/list and one to /position/list
+        # Due to tenacity, counts could be higher if there were (mocked) failures initially
+        # For this happy path, expect one of each after token is set.
+        account_list_call = any(
+            call.args == ("GET", "/account/list")
+            and isinstance(call.kwargs.get("headers"), dict)
+            for call in mock_http_client.return_value.request.call_args_list
+        )
+        position_list_call = any(
+            call.args == ("GET", "/position/list")
+            and isinstance(call.kwargs.get("headers"), dict)
+            for call in mock_http_client.return_value.request.call_args_list
+        )
+        assert account_list_call, "GET /account/list was not called correctly"
+        assert position_list_call, "GET /position/list was not called correctly"
 
     finally:
         mock_http_client.return_value.request.side_effect = original_request_side_effect
+        # Clean up tasks if adapter.connect was implicitly called via _get_initial_account_data needing a token
+        # However, this test uses the 'adapter' fixture which doesn't auto-connect or get token initially.
+        # _get_initial_account_data will call _make_request which tries to get token if needed.
+        # For this test, assume token exists or _get_access_token is mocked if it was triggered.
+        # The adapter.close() in the fixture should handle task cleanup if any were started.
 
 
 # More tests to be added...

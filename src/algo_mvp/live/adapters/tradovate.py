@@ -279,7 +279,7 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
 
             auth_message = f"authorize\n0\n\n{self.access_token_details.accessToken}"
             await self.ws_connection.send(auth_message)
-            logger.debug(f"Sent WebSocket authorization message.")
+            logger.debug("Sent WebSocket authorization message.")
 
             # Handle initial 'o' frame (connection open)
             initial_response = await self.ws_connection.recv()
@@ -302,7 +302,7 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
             # Further parsing of auth_confirm_response can be done here if needed
 
             # Subscribe to order and fill reports
-            # deviceId = self.access_token_details.deviceId # Or the one used in auth. Needs to be consistent.
+            # deviceId = self.access_token_details.deviceId  # Or the one used in auth. Needs to be consistent.
             # The deviceId in subscribe should match the one used for accessTokenRequest if that's how Tradovate links them.
             # For now, using a fixed or configured deviceId for subscribe.
             # Let's assume the API doesn't require deviceId for these subscriptions explicitly in this manner.
@@ -810,9 +810,7 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
                 logger.debug("Polling for cash and positions...")
                 # Fetch cash (though it might also come from WS props)
                 try:
-                    cash_data = (
-                        await self.get_cash()
-                    )  # This should use _make_request internally
+                    await self.get_cash()  # This should use _make_request internally
                     # self._cash is updated by get_cash()
                     logger.debug(f"Polled cash: {self._cash}")
                 except Exception as e_cash:
@@ -820,9 +818,7 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
 
                 # Fetch positions
                 try:
-                    positions_data = (
-                        await self.get_positions()
-                    )  # This should use _make_request
+                    await self.get_positions()  # This should use _make_request
                     # self._positions is updated by get_positions()
                     logger.debug(f"Polled positions: {len(self._positions)} items")
                 except Exception as e_pos:
@@ -926,7 +922,7 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
                 f"Failed to submit order: {e.response.status_code} - {e.response.text}"
             )
             # Parse error for details if possible, e.g. margin error
-            error_details = (
+            _error_details = (  # Renamed to indicate it might not be used further here
                 e.response.json()
                 if "application/json" in e.response.headers.get("content-type", "")
                 else {"message": e.response.text}
