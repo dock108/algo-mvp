@@ -1,47 +1,39 @@
 # Alpaca data fetching implementation
-import asyncio
-import datetime
+# import asyncio  # Removed unused import
+# import datetime  # Removed unused import
 import os
 import sys
-from typing import Optional
 
 import pandas as pd
 import pendulum
+from alpaca.common.exceptions import APIError
 
-# from alpaca_trade_api.rest import REST, APIError, TimeFrame, TimeFrameUnit
-from tenacity import (
+# Import from alpaca-py instead of alpaca-trade-api
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+from tenacity import (  # wait_fixed,  # Removed unused import
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    wait_fixed,
 )
 
-
-# Placeholder for actual APIError if alpaca_trade_api is not imported
-class APIError(Exception):
-    pass
-
-
-# Placeholders for TimeFrame and TimeFrameUnit if alpaca_trade_api is not imported
-class TimeFrame:
-    Day = "1Day"
-    Hour = "1Hour"
-    Minute = "1Min"
-
-
-class TimeFrameUnit:
-    Day = "Day"
-    Hour = "Hour"
-    Minute = "Minute"
+# from typing import Optional  # Removed unused import
 
 
 # Define a more specific retry condition for typical Alpaca API errors
 def is_retryable_alpaca_error(exception):
     """Determines if an Alpaca APIError is retryable (e.g., rate limit, server-side)."""
     if isinstance(exception, APIError):
-        # Alpaca uses 429 for rate limiting. 5xx errors are server-side.
-        return exception.status_code == 429 or exception.status_code >= 500
+        # Most likely structure for alpaca-py exceptions
+        if hasattr(exception, "status_code"):
+            return exception.status_code == 429 or exception.status_code >= 500
+        # Fallback if structure is different
+        return (
+            "rate limit" in str(exception).lower()
+            or "server error" in str(exception).lower()
+        )
     return False
 
 
@@ -63,12 +55,10 @@ class AlpacaFetcher:
                 "Alpaca API key and secret key must be provided or set as environment variables ALPACA_KEY_ID and ALPACA_SECRET_KEY."
             )
 
-        # Using data_v2 for historical bars, paper=True is irrelevant for data.
-        self.client = REST(
-            self.api_key, self.secret_key, data_feed="sip"
-        )  # SIP for free data
+        # Initialize StockHistoricalDataClient
+        self.client = StockHistoricalDataClient(self.api_key, self.secret_key)
         if self.verbose:
-            print("AlpacaFetcher initialized. Data feed: SIP (free)")
+            print("AlpacaFetcher initialized with alpaca-py StockHistoricalDataClient")
 
     @retry(
         stop=stop_after_attempt(5),
@@ -83,9 +73,7 @@ class AlpacaFetcher:
     ) -> pd.DataFrame | None:
         """Fetches historical bars for a symbol between start and end dates."""
 
-        start_dt = pendulum.parse(start_date_str).replace(
-            tzinfo=None
-        )  # Alpaca API expects naive datetime for start/end
+        start_dt = pendulum.parse(start_date_str).replace(tzinfo=None)
         end_dt = pendulum.parse(end_date_str).replace(tzinfo=None)
 
         # Parse timeframe_str (e.g., "1Min", "1Day", "1H") into Alpaca TimeFrame object
@@ -102,53 +90,58 @@ class AlpacaFetcher:
                 else timeframe_str[-1:].lower()
             )
 
+            # Map to TimeFrame object
             if unit_str == "min":
-                tf_unit = TimeFrameUnit.Minute
+                timeframe = TimeFrame(value, TimeFrameUnit.Minute)
             elif unit_str == "day":
-                tf_unit = TimeFrameUnit.Day
+                timeframe = TimeFrame(value, TimeFrameUnit.Day)
             elif unit_str == "h":
-                tf_unit = TimeFrameUnit.Hour
+                timeframe = TimeFrame(value, TimeFrameUnit.Hour)
             else:
                 raise ValueError(
                     f"Unsupported timeframe unit in '{timeframe_str}'. Supported: Min, Day, H"
                 )
-
-            timeframe = TimeFrame(value, tf_unit)
         except ValueError as e:
             print(f"Error parsing timeframe '{timeframe_str}': {e}", file=sys.stderr)
             return None
 
         if self.verbose:
             print(
-                f"Alpaca: Fetching {symbol} ({timeframe_str} -> {timeframe}) from {start_dt.to_iso8601_string()} to {end_dt.to_iso8601_string()}, Adjust: {self.adjust}"
+                f"Alpaca: Fetching {symbol} ({timeframe_str}) from {start_dt.to_iso8601_string()} to {end_dt.to_iso8601_string()}, Adjust: {self.adjust}"
             )
 
         try:
-            # Alpaca API /v2/stocks/{symbol}/bars
-            # The end date is inclusive in the request by default with how get_bars works.
-            # AlpacaPy automatically handles pagination for longer date ranges.
-            request_params = {
-                "symbol_or_symbols": symbol,
-                "timeframe": timeframe,
-                "start": start_dt.isoformat(),  # Ensure ISO format, though AlpacaPy might handle others
-                "end": end_dt.isoformat(),
-                "adjustment": (
-                    "split" if self.adjust else "raw"
-                ),  # 'all' for dividends and splits, 'split' for splits only
-            }
+            # Create StockBarsRequest and fetch data
+            request_params = StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=timeframe,
+                start=start_dt,
+                end=end_dt,
+                adjustment=("split" if self.adjust else "raw"),
+            )
             if self.verbose:
                 print(f"Alpaca API request params: {request_params}")
 
-            bars_df = self.client.get_bars(**request_params).df
+            # Get stock bars and convert to DataFrame
+            bars_response = self.client.get_stock_bars(request_params)
+
+            # Check if we got any data back
+            if bars_response is None or not bars_response.data:
+                if self.verbose:
+                    print(
+                        f"Alpaca: No data returned for {symbol} in the given range and timeframe."
+                    )
+                return pd.DataFrame()  # Return empty DataFrame for consistency
+
+            # Convert to DataFrame
+            bars_df = bars_response.df
 
             if bars_df.empty:
                 if self.verbose:
                     print(
                         f"Alpaca: No data returned for {symbol} in the given range and timeframe."
                     )
-                return (
-                    pd.DataFrame()
-                )  # Return empty DataFrame, not None, for consistency
+                return pd.DataFrame()
 
             # Ensure timezone is UTC as Alpaca returns UTC timestamps
             if bars_df.index.tz is None:
@@ -174,10 +167,8 @@ class AlpacaFetcher:
         except APIError as e:
             # Log specific API errors that tenacity might not catch or if it exhausts retries
             print(f"Alpaca API Error for {symbol}: {e}", file=sys.stderr)
-            print(
-                f"Response details: {e._response.text if e._response else 'No response details'}",
-                file=sys.stderr,
-            )
+            if hasattr(e, "response") and hasattr(e.response, "text"):
+                print(f"Response details: {e.response.text}", file=sys.stderr)
             return None
         except ConnectionError as e:
             print(f"Alpaca Connection Error for {symbol}: {e}", file=sys.stderr)

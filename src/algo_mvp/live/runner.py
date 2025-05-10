@@ -4,6 +4,8 @@ import threading
 
 import backtrader as bt
 
+from algo_mvp.live.adapters import AlpacaBrokerAdapter  # Import AlpacaBrokerAdapter
+
 # import pendulum # No longer used
 
 # Configure a logger for LiveRunner
@@ -23,14 +25,16 @@ class LiveRunner:
         self,
         strategy_path: str,
         params: dict,
-        broker_adapter,
+        # broker_adapter, # Replaced by broker_config
+        broker_config: dict,  # New: to specify provider e.g. {'provider': 'alpaca'}
         datafeed_config: dict,
         on_trade=None,
         on_error=None,
     ):
         self.strategy_path = strategy_path
         self.params = params
-        self.broker_adapter = broker_adapter
+        # self.broker_adapter = broker_adapter # Replaced
+        self.broker_adapter = None
         self.datafeed_config = (
             datafeed_config  # Example: {'symbol': 'MESM25', 'timeframe': '1Min'}
         )
@@ -40,6 +44,43 @@ class LiveRunner:
         self._thread = None
         self.cerebro = None
         # self.console = Console()  # Replaced by logger
+
+        # Instantiate broker adapter based on config
+        provider = broker_config.get("provider")
+        if provider == "alpaca":
+            # AlpacaBrokerAdapter expects the LiveRunner instance for callbacks
+            self.broker_adapter = AlpacaBrokerAdapter(live_runner=self)
+            self._log("Initialized AlpacaBrokerAdapter.", level=logging.INFO)
+            # Attempt to connect the broker adapter immediately
+            try:
+                self.broker_adapter.connect()
+                self._log(
+                    "AlpacaBrokerAdapter connected successfully.", level=logging.INFO
+                )
+            except Exception as e:
+                self._log(
+                    f"Failed to connect AlpacaBrokerAdapter: {e}", level=logging.ERROR
+                )
+                # Optionally re-raise or handle this critical failure
+                # For now, we log and continue, but the adapter might not be usable.
+                if self.on_error:
+                    self.on_error(f"Failed to connect AlpacaBrokerAdapter: {e}")
+        # elif provider == 'tradovate': # Example for another provider
+        # self.broker_adapter = TradovateBrokerAdapter(live_runner=self, **broker_config.get('settings', {}))
+        # self._log(f"Initialized TradovateBrokerAdapter.", level=logging.INFO)
+        elif provider == "mock":
+            # For testing: use the mock adapter provided in the config
+            self.broker_adapter = broker_config.get("adapter")
+            if self.broker_adapter:
+                self._log("Using provided mock broker adapter.", level=logging.INFO)
+            else:
+                error_msg = "No mock adapter provided in broker_config."
+                self._log(error_msg, level=logging.ERROR)
+                raise ValueError(error_msg)
+        else:
+            error_msg = f"Unsupported broker provider: {provider}. Please choose 'alpaca' or 'mock'."
+            self._log(error_msg, level=logging.ERROR)
+            raise ValueError(error_msg)
 
     def _log(
         self, message: str, level: int = logging.INFO, style: str = ""

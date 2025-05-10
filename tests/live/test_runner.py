@@ -27,7 +27,10 @@ def live_runner_config(mock_broker_adapter):
     return {
         "strategy_path": "tests.live.test_runner:DummyStrategy",  # Points to DummyStrategy in this file
         "params": {},
-        "broker_adapter": mock_broker_adapter,
+        "broker_config": {
+            "provider": "mock",
+            "adapter": mock_broker_adapter,  # Pass the mock adapter via broker_config
+        },
         "datafeed_config": {"symbol": "DUMMY/USD", "timeframe": "1Min"},
     }
 
@@ -161,9 +164,9 @@ def test_liverunner_with_mockbroker_order_flow(
     mock_cerebro_run, live_runner_config, caplog
 ):
     """Test that MockBrokerAdapter receives order calls via a strategy."""
-    mock_broker = live_runner_config[
-        "broker_adapter"
-    ]  # Get the mock broker from config
+    mock_broker = live_runner_config["broker_config"][
+        "adapter"
+    ]  # Get the mock broker from broker_config
     mock_broker.submit_order = MagicMock(
         wraps=mock_broker.submit_order
     )  # Wrap to spy and keep original logic
