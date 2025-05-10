@@ -255,9 +255,9 @@ class AlpacaBrokerAdapter(BrokerAdapterBase):
         ):
             with attempt:
                 try:
-                    alpaca_positions: List[AlpacaPositionModel] = (
-                        await self.client.get_all_positions_async()
-                    )
+                    alpaca_positions: List[
+                        AlpacaPositionModel
+                    ] = await self.client.get_all_positions_async()
                     return [
                         Position(
                             symbol=p.symbol,

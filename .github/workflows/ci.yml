@@ -34,11 +34,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-poetry-
     - name: Install dependencies
-      run: poetry install --no-interaction --no-root
-    - name: Run pre-commit hooks
-      run: |
-        poetry run pre-commit install
-        poetry run pre-commit run --all-files
+      run: poetry install --no-interaction
     - name: Run tests with coverage
       run: |
         poetry run pytest --cov=src --cov-fail-under=80

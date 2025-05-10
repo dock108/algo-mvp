@@ -10,9 +10,7 @@ class Order:
     qty: float
     side: str  # 'buy' or 'sell'
     order_type: str  # 'market', 'limit', 'stop', etc.
-    status: str = (
-        "new"  # 'new', 'submitted', 'filled', 'partially_filled', 'canceled', 'expired', 'rejected'
-    )
+    status: str = "new"  # 'new', 'submitted', 'filled', 'partially_filled', 'canceled', 'expired', 'rejected'
     filled_qty: float = 0.0
     avg_fill_price: Optional[float] = None
     limit_price: Optional[float] = None
