@@ -411,3 +411,31 @@ async def test_fill_update_triggers_on_trade(
 
 
 # --- TODO: Add tests for error events from websocket ---
+
+
+# --- Tests for close() ---
+
+
+def test_close_method_stops_stream_and_joins_thread(
+    alpaca_adapter, mock_trading_stream
+):
+    """Test that the close method stops the stream and joins the thread."""
+    # First connect to set up the stream and thread
+    alpaca_adapter.connect()
+
+    # Mock the thread's join method
+    alpaca_adapter.stream_thread.join = MagicMock()
+
+    # Call close
+    alpaca_adapter.close()
+
+    # Check that the stream was stopped
+    assert mock_trading_stream.stop.called
+
+    # Check that the thread was joined
+    assert alpaca_adapter.stream_thread.join.called
+
+    # Check that references were cleared
+    assert alpaca_adapter.stream is None
+    assert alpaca_adapter.client is None
+    assert alpaca_adapter._is_running is False

@@ -1,8 +1,9 @@
-import asyncio
 from collections import defaultdict
 
+from algo_mvp.live.broker_adapter_base import BrokerAdapterBase
 
-class MockBrokerAdapter:
+
+class MockBrokerAdapter(BrokerAdapterBase):
     def __init__(self):
         self.cash = 100000.0
         self.positions = defaultdict(float)
@@ -13,9 +14,24 @@ class MockBrokerAdapter:
         self.cancel_order_calls = 0
         self.get_cash_calls = 0
         self.get_positions_calls = 0
+        self.close_calls = 0
+        self.connect_calls = 0
         # Add more if other methods are tracked
 
         self._order_id_counter = 0  # To generate unique mock order IDs
+        self._is_connected = False
+
+    def connect(self):
+        """Connect to the mock broker API."""
+        self.connect_calls += 1
+        self._is_connected = True
+        return True
+
+    def close(self):
+        """Close all connections to the mock broker."""
+        self.close_calls += 1
+        self._is_connected = False
+        return True
 
     async def submit_order(
         self,
@@ -24,13 +40,14 @@ class MockBrokerAdapter:
         side: str,
         order_type: str,
         limit_price: float | None = None,
+        stop_price: float | None = None,
     ):
         # self.call_counts['submit_order'] += 1
         self.submit_order_calls += 1
         # print(
         #     f"MockBrokerAdapter: Submitting order - {side} {qty} {symbol} @ {limit_price if limit_price else 'market'}"
         # )
-        await asyncio.sleep(0.01)  # Simulate network latency
+        # Simulate network latency
         self._order_id_counter += 1
         order_id = f"mock_order_id_{self._order_id_counter}"
 
@@ -85,24 +102,23 @@ class MockBrokerAdapter:
                 }
         return {"id": order_id, "status": "error", "reason": "invalid order side"}
 
-    async def cancel_order(self, order_id: str):
+    async def cancel_order(self, order_id: str) -> bool:
         # self.call_counts['cancel_order'] += 1
         self.cancel_order_calls += 1
         # print(f"MockBrokerAdapter: Cancelling order {order_id}")
-        await asyncio.sleep(0.01)  # Simulate network latency
-        return {
-            "id": order_id,
-            "status": "cancelled",
-        }  # Assume cancellation is always successful
+        return True  # Assume cancellation is always successful
 
-    async def get_cash(self) -> float:
+    async def get_cash(self) -> dict[str, float]:
         # self.call_counts['get_cash'] += 1
         self.get_cash_calls += 1
-        await asyncio.sleep(0.01)  # Simulate network latency
-        return self.cash
+        return {"USD": self.cash}
 
-    async def get_positions(self) -> dict:
+    async def get_positions(self) -> list:
         # self.call_counts['get_positions'] += 1
         self.get_positions_calls += 1
-        await asyncio.sleep(0.01)  # Simulate network latency
-        return dict(self.positions)  # Return a copy to prevent direct modification
+        from algo_mvp.live.models import Position
+
+        return [
+            Position(symbol=symbol, qty=float(qty), avg_entry_price=100.0)  # Mock price
+            for symbol, qty in self.positions.items()
+        ]

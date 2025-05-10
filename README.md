@@ -83,6 +83,7 @@ API credentials and service endpoints should be set as environment variables.
 
 This project provides a basic live trading engine skeleton. It can load Backtrader strategies, connect to a broker adapter, and be controlled via a CLI.
 The `AlpacaBrokerAdapter` connects to Alpaca for paper trading (see Environment Variables section for required API keys and URL configuration).
+The adapter uses asynchronous APIs for all broker operations to ensure efficient and non-blocking execution.
 
 **CLI Demo:**
 ```bash

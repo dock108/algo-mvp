@@ -1,4 +1,5 @@
 import os
+import threading
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -12,7 +13,7 @@ from alpaca.trading.requests import (
     StopOrderRequest,
 )
 from alpaca.trading.stream import TradingStream
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
 
 from algo_mvp.live.broker_adapter_base import BrokerAdapterBase
 from algo_mvp.live.models import Order, Position
@@ -33,6 +34,8 @@ class AlpacaBrokerAdapter(BrokerAdapterBase):
         # Set in connect()
         self.client: Optional[TradingClient] = None
         self.stream: Optional[TradingStream] = None
+        self.stream_thread: Optional[threading.Thread] = None
+        self._is_running = False
 
     # ---------------------------------------------------------------------
     # Connection helpers
@@ -53,13 +56,48 @@ class AlpacaBrokerAdapter(BrokerAdapterBase):
         self.stream.subscribe_trade_updates(self._handle_trade_update)
 
         # Run the stream in a background thread to avoid blocking
-        import threading
-
-        self.stream_thread = threading.Thread(target=self.stream.run)
+        self._is_running = True
+        self.stream_thread = threading.Thread(target=self._run_stream)
         self.stream_thread.daemon = (
             True  # Allow the thread to exit when the main thread exits
         )
         self.stream_thread.start()
+
+    def _run_stream(self):
+        """Run the stream in a loop that can be stopped."""
+        try:
+            while self._is_running and self.stream:
+                self.stream.run(
+                    timeout=60
+                )  # Run with timeout to allow for clean shutdown
+        except Exception as e:
+            if self.live_runner and self.live_runner.on_error and self._is_running:
+                self.live_runner.on_error(f"Stream error: {e}")
+
+    def close(self):
+        """Close all connections and clean up resources."""
+        self._is_running = False
+
+        # Stop the stream
+        if self.stream:
+            try:
+                self.stream.stop()
+                self.stream = None
+            except Exception as e:
+                print(f"Error stopping stream: {e}")
+
+        # Wait for thread to join
+        if self.stream_thread and self.stream_thread.is_alive():
+            try:
+                self.stream_thread.join(timeout=5)  # Give it 5 seconds to finish
+                if self.stream_thread.is_alive():
+                    print("Warning: Stream thread did not exit cleanly")
+            except Exception as e:
+                print(f"Error joining stream thread: {e}")
+
+        # Clear client reference
+        self.client = None
+        self.stream_thread = None
 
     async def _handle_trade_update(self, data):
         """Translate Alpaca TradeUpdate object → internal Order, call LiveRunner callbacks."""
@@ -93,10 +131,7 @@ class AlpacaBrokerAdapter(BrokerAdapterBase):
     # ------------------------------------------------------------------
     # Order helpers
     # ------------------------------------------------------------------
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10)
-    )
-    def submit_order(
+    async def submit_order(
         self,
         symbol: str,
         qty: float,
@@ -139,13 +174,104 @@ class AlpacaBrokerAdapter(BrokerAdapterBase):
         else:
             raise ValueError(f"Unsupported order_type '{order_type}'.")
 
-        try:
-            alpaca_order: AlpacaOrderModel = self.client.submit_order(order_data=req)
-            return self._map_order(alpaca_order)
-        except Exception as exc:  # pylint: disable=broad-except
-            # tenacity will retry; on final failure returns None
-            print(f"Alpaca submit_order error: {exc}")
-            raise  # Let tenacity retry this
+        # Using async retry pattern
+        retries = 0
+        max_retries = 3
+
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(max_retries),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+        ):
+            with attempt:
+                try:
+                    # Using the async version of the API
+                    alpaca_order: AlpacaOrderModel = (
+                        await self.client.submit_order_async(order_data=req)
+                    )
+                    return self._map_order(alpaca_order)
+                except Exception as exc:  # pylint: disable=broad-except
+                    retries += 1
+                    print(
+                        f"Alpaca submit_order_async error (attempt {retries}/{max_retries}): {exc}"
+                    )
+                    raise  # Let AsyncRetrying handle the retry
+
+    async def cancel_order(self, order_id: str) -> bool:
+        if self.client is None:
+            raise RuntimeError("Adapter not connected.")
+
+        # Using async retry pattern
+        retries = 0
+        max_retries = 3
+
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(max_retries),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+        ):
+            with attempt:
+                try:
+                    await self.client.cancel_order_by_id_async(order_id)
+                    return True
+                except Exception as exc:  # pylint: disable=broad-except
+                    retries += 1
+                    print(
+                        f"Cancel order error (attempt {retries}/{max_retries}): {exc}"
+                    )
+                    raise  # Let AsyncRetrying handle the retry
+
+    async def get_cash(self) -> dict[str, float]:
+        """Retrieves cash balance."""
+        if not self.client:
+            self._raise_not_connected_error()
+
+        # Using async retry pattern
+        retries = 0
+        max_retries = 3
+
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(max_retries),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+        ):
+            with attempt:
+                try:
+                    account = await self.client.get_account_async()
+                    return {"USD": float(account.cash)}
+                except Exception as exc:  # pylint: disable=broad-except
+                    retries += 1
+                    print(f"Get cash error (attempt {retries}/{max_retries}): {exc}")
+                    raise  # Let AsyncRetrying handle the retry
+
+    async def get_positions(self) -> List[Position]:
+        if self.client is None:
+            raise RuntimeError("Adapter not connected.")
+
+        # Using async retry pattern
+        retries = 0
+        max_retries = 3
+
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(max_retries),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+        ):
+            with attempt:
+                try:
+                    alpaca_positions: List[AlpacaPositionModel] = (
+                        await self.client.get_all_positions_async()
+                    )
+                    return [
+                        Position(
+                            symbol=p.symbol,
+                            qty=float(p.qty),
+                            avg_entry_price=float(p.avg_entry_price),
+                        )
+                        for p in alpaca_positions
+                    ]
+                except Exception as exc:  # pylint: disable=broad-except
+                    retries += 1
+                    print(
+                        f"Get positions error (attempt {retries}/{max_retries}): {exc}"
+                    )
+                    raise  # Let AsyncRetrying handle the retry
 
     def _map_order(
         self, alpaca_order: AlpacaOrderModel, override_status: Optional[str] = None
@@ -187,45 +313,3 @@ class AlpacaBrokerAdapter(BrokerAdapterBase):
             created_at=created_at,
             updated_at=updated_at,
         )
-
-    # ------------------------------------------------------------------
-    # Cancel / cash / positions
-    # ------------------------------------------------------------------
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10)
-    )
-    def cancel_order(self, order_id: str) -> bool:
-        if self.client is None:
-            raise RuntimeError("Adapter not connected.")
-        try:
-            self.client.cancel_order_by_id(order_id)
-            return True
-        except Exception as exc:  # pylint: disable=broad-except
-            print(f"Cancel order error: {exc}")
-            raise
-
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10)
-    )
-    def get_cash(self) -> dict[str, float]:
-        """Retrieves cash balance."""
-        if not self.client:
-            self._raise_not_connected_error()
-        account = self.client.get_account()
-        return {"USD": float(account.cash)}
-
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10)
-    )
-    def get_positions(self) -> List[Position]:
-        if self.client is None:
-            raise RuntimeError("Adapter not connected.")
-        alpaca_positions: List[AlpacaPositionModel] = self.client.get_all_positions()
-        return [
-            Position(
-                symbol=p.symbol,
-                qty=float(p.qty),
-                avg_entry_price=float(p.avg_entry_price),
-            )
-            for p in alpaca_positions
-        ]

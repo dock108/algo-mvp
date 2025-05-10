@@ -79,3 +79,21 @@
 
 ### Fixed
 - Persistent linting errors in various files.
+
+## [0.5.0] – 2025-05-09
+### Added
+- AlpacaBrokerAdapter (paper) with websocket fills + REST orders.
+- Fixed failing tests in data/alpaca and data/tradovate modules.
+
+## [0.5.1] – 2025-05-09
+### Added
+- Proper resource cleanup with close() method in BrokerAdapterBase and implementations.
+- LiveRunner now properly cleans up adapter resources when stopping.
+
+### Changed
+- Converted AlpacaBrokerAdapter REST calls to async for consistent IO paradigm with WebSocket streaming.
+- Improved error handling with async retries for all API calls.
+- Updated MockBrokerAdapter to support the async interface.
+
+### Fixed
+- Fixed potential thread/resource leaks when shutting down the LiveRunner.

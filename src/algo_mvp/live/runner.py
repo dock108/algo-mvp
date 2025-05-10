@@ -203,6 +203,17 @@ class LiveRunner:
                 "No active thread to stop.", level=logging.WARNING
             )  # Use logging level
 
+        # Clean up broker adapter resources
+        if self.broker_adapter and hasattr(self.broker_adapter, "close"):
+            try:
+                self._log("Closing broker adapter connections...", level=logging.INFO)
+                self.broker_adapter.close()
+                self._log("Broker adapter connections closed.", level=logging.INFO)
+            except Exception as e:
+                self._log(f"Error closing broker adapter: {e}", level=logging.ERROR)
+                if self.on_error:
+                    self.on_error(e)
+
         self._status = "stopped"
 
     def status(self) -> str:

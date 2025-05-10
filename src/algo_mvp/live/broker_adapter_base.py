@@ -16,7 +16,7 @@ class BrokerAdapterBase(ABC):
         pass
 
     @abstractmethod
-    def submit_order(
+    async def submit_order(
         self,
         symbol: str,
         qty: float,
@@ -29,18 +29,23 @@ class BrokerAdapterBase(ABC):
         pass
 
     @abstractmethod
-    def cancel_order(self, order_id: str) -> bool:
+    async def cancel_order(self, order_id: str) -> bool:
         """Cancel an order by ID."""
         pass
 
     @abstractmethod
-    def get_cash(self) -> Dict[str, float]:
+    async def get_cash(self) -> Dict[str, float]:
         """Get the current cash balance by currency."""
         pass
 
     @abstractmethod
-    def get_positions(self) -> List[Position]:
+    async def get_positions(self) -> List[Position]:
         """Get the current positions."""
+        pass
+
+    @abstractmethod
+    def close(self):
+        """Close all connections and clean up resources."""
         pass
 
     def _raise_not_connected_error(self):
