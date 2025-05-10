@@ -1,0 +1,9 @@
+runners:
+  - name: mes_scalp_demo
+    provider: tradovate
+    strategy: algo_mvp.backtest.strategies.vwap_atr:VWAPATRStrategy
+    params:
+      band_mult: 2
+      atr_len: 14
+    symbol: MESM25
+    timeframe: 1Min

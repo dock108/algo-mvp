@@ -10,6 +10,9 @@ class BrokerAdapterBase(ABC):
     All broker adapters should implement these methods.
     """
 
+    def __init__(self, runner):
+        self.runner = runner
+
     @abstractmethod
     def connect(self):
         """Connect to the broker API."""

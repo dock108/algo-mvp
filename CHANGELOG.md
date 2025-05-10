@@ -123,3 +123,8 @@
 
 ### Added
 - N/A
+
+## [0.6.0] – 2025-05-09
+### Added
+- TradovateBrokerAdapter (demo) with REST + WebSocket support.
+- Fixed & expanded data/tradovate tests.

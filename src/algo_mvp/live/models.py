@@ -34,3 +34,18 @@ class Position:
     # last_trade_price: Optional[float] = None # Price of the last fill affecting this position
     # Add other relevant fields from Alpaca's Position entity if needed
     # e.g., cost_basis, market_value, etc.
+
+
+@dataclass
+class Fill:
+    id: str  # Broker-assigned fill/trade ID
+    order_id: str  # Broker-assigned ID of the order this fill belongs to
+    symbol: str
+    qty: float  # Quantity filled in this specific trade
+    price: float  # Price at which this fill occurred
+    side: str  # 'buy' or 'sell'
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    commission: float = 0.0
+    # Optional fields based on broker specifics
+    # exchange: Optional[str] = None
+    # liquidity: Optional[str] = None # e.g., 'M' for Maker, 'T' for Taker
