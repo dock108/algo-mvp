@@ -57,12 +57,14 @@ Fetched data is stored in Parquet files under the `data/` directory, organized b
 
 ### Environment Variables
 
-API credentials must be set as environment variables:
+API credentials and service endpoints should be set as environment variables.
 
 **Alpaca:**
 - `ALPACA_KEY_ID`: Your Alpaca API Key ID.
 - `ALPACA_SECRET_KEY`: Your Alpaca Secret Key.
-(These are for live or paper trading accounts; data fetching uses the SIP feed available with free accounts.)
+- `ALPACA_BASE_URL`: The base URL for the Alpaca API. For paper trading with `AlpacaBrokerAdapter`, this defaults to `https://paper-api.alpaca.markets`. If not set, the adapter will use this paper trading URL. For live trading, you would set this to the live API endpoint.
+
+> **Note:** This project uses the modern `alpaca-py` SDK (^0.40.0) instead of the deprecated `alpaca-trade-api`. The `AlpacaBrokerAdapter` and data fetching modules have been updated to use this newer SDK, which provides better compatibility with recent Python versions and more reliable operation.
 
 **Tradovate (Demo):**
 - `TRADOVATE_CLIENT_ID`: Your Tradovate demo client ID (optional, might depend on specific demo setup).
@@ -79,7 +81,8 @@ API credentials must be set as environment variables:
 
 ## Live Trading (skeleton)
 
-This project provides a basic live trading engine skeleton. It can load Backtrader strategies, connect to a broker adapter (currently a mock adapter), and be controlled via a CLI.
+This project provides a basic live trading engine skeleton. It can load Backtrader strategies, connect to a broker adapter, and be controlled via a CLI.
+The `AlpacaBrokerAdapter` connects to Alpaca for paper trading (see Environment Variables section for required API keys and URL configuration).
 
 **CLI Demo:**
 ```bash
@@ -121,7 +124,7 @@ poetry run python -m algo_mvp.live --config configs/live_spy.yaml [--paper | --l
 Live trading activity (orders, trades, equity snapshots, daily summaries) is logged to a SQLite database specified by the `--db` argument. The schema is defined in `databases/schema.sql`.
 
 ### Important Notes
-- **Credentials:** Alpaca API keys (`ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`) must be set as environment variables.
+- **Credentials:** Ensure `ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`, and optionally `ALPACA_BASE_URL` are set as environment variables for the `AlpacaBrokerAdapter`.
 - **Market Data:** The custom `AlpacaData` feed uses the `StockDataStream` from `alpaca-py`. Ensure your Alpaca account has the necessary market data subscriptions (e.g., IEX is free, SIP may require paid plans).
 - **Brokerage:** The custom `AlpacaBroker` interacts with the Alpaca Trading API via `alpaca-py`.
 - **Risk:** Live trading involves real financial risk. Use with extreme caution, especially with real money (`--live` flag). Start with paper trading (`--paper`) extensively.
