@@ -228,16 +228,16 @@ async def test_connect_successful(adapter, mock_http_client, mock_websocket_conn
 
     expected_auth_msg = f"authorize\n0\n\n{TEST_ACCESS_TOKEN}"
 
-    assert (
-        adapter.ws_connection.send.call_count > 0
-    ), "ws_connection.send was not called"
+    assert adapter.ws_connection.send.call_count > 0, (
+        "ws_connection.send was not called"
+    )
 
     # Get the first argument of the first call to send
     actual_sent_arg = adapter.ws_connection.send.call_args_list[0][0][0]
 
-    assert (
-        actual_sent_arg == expected_auth_msg
-    ), f"Auth message mismatch. Expected: {repr(expected_auth_msg)}, Actual: {repr(actual_sent_arg)}"
+    assert actual_sent_arg == expected_auth_msg, (
+        f"Auth message mismatch. Expected: {repr(expected_auth_msg)}, Actual: {repr(actual_sent_arg)}"
+    )
 
     assert adapter.heartbeat_task is not None
     assert adapter.ws_listener_task is not None
@@ -756,9 +756,9 @@ async def test_submit_market_order(connected_adapter, mock_http_client):
     mock_http_client.return_value.request.side_effect = custom_request_mock
 
     try:
-        assert (
-            adapter._account_id is not None
-        ), "_account_id not set by connected_adapter"
+        assert adapter._account_id is not None, (
+            "_account_id not set by connected_adapter"
+        )
 
         submitted_order = await adapter.submit_order(
             symbol=symbol, qty=qty, side=side, order_type="market"
@@ -854,9 +854,9 @@ async def test_submit_limit_order(connected_adapter, mock_http_client):
     mock_http_client.return_value.request.side_effect = custom_request_mock
 
     try:
-        assert (
-            adapter._account_id is not None
-        ), "_account_id not set by connected_adapter"
+        assert adapter._account_id is not None, (
+            "_account_id not set by connected_adapter"
+        )
 
         submitted_order = await adapter.submit_order(
             symbol=symbol,
@@ -951,9 +951,9 @@ async def test_submit_stop_order(connected_adapter, mock_http_client):
     mock_http_client.return_value.request.side_effect = custom_request_mock
 
     try:
-        assert (
-            adapter._account_id is not None
-        ), "_account_id not set by connected_adapter"
+        assert adapter._account_id is not None, (
+            "_account_id not set by connected_adapter"
+        )
 
         submitted_order = await adapter.submit_order(
             symbol=symbol, qty=qty, side=side, order_type="stop", stop_price=stop_price
@@ -1051,9 +1051,9 @@ async def test_cancel_order_successful(connected_adapter, mock_http_client):
     mock_http_client.return_value.request.side_effect = custom_request_mock
 
     try:
-        assert (
-            adapter.access_token_details is not None
-        ), "Access token not set by connected_adapter"
+        assert adapter.access_token_details is not None, (
+            "Access token not set by connected_adapter"
+        )
 
         result = await adapter.cancel_order(order_id_to_cancel)
 
@@ -1239,9 +1239,9 @@ async def test_get_cash_successful(connected_adapter, mock_http_client):
     mock_http_client.return_value.request.side_effect = custom_request_mock
 
     try:
-        assert (
-            adapter._account_id is not None
-        ), "_account_id not set by connected_adapter"
+        assert adapter._account_id is not None, (
+            "_account_id not set by connected_adapter"
+        )
 
         # Clear previous cash to ensure it's updated by the call
         adapter._cash = {}  # Initialize as empty dict
@@ -1507,9 +1507,9 @@ async def test_get_cash_fails_to_fetch_account_list(
 @pytest.mark.asyncio
 async def test_get_positions_successful(connected_adapter, mock_http_client):
     adapter = connected_adapter
-    assert (
-        adapter._account_id is not None
-    ), "_account_id not set by connected_adapter fixture"
+    assert adapter._account_id is not None, (
+        "_account_id not set by connected_adapter fixture"
+    )
 
     tradovate_position_data = [
         {
@@ -1815,9 +1815,9 @@ async def test_get_positions_fetches_account_id_if_not_set(
         elif endpoint == "/position/list" and method == "GET":
             mock_response = AsyncMock(status_code=200)
             # Ensure that this mock is only called *after* _account_id would have been set
-            assert (
-                adapter._account_id == expected_account_id
-            ), "_account_id not set before /position/list call"
+            assert adapter._account_id == expected_account_id, (
+                "_account_id not set before /position/list call"
+            )
             mock_response.json = MagicMock(return_value=tradovate_position_data)
             mock_response.raise_for_status = MagicMock()
             return mock_response

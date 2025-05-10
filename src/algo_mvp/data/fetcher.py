@@ -272,7 +272,7 @@ class DataFetcher:
             ):
                 if self.verbose:
                     print(
-                        f"Data for {self.config.symbol} spans multiple years and is large ({estimated_size_bytes / (1024*1024):.2f}MB est.). Partitioning by year."
+                        f"Data for {self.config.symbol} spans multiple years and is large ({estimated_size_bytes / (1024 * 1024):.2f}MB est.). Partitioning by year."
                     )
                 # Change base_path_for_timeframe to be a directory for yearly files
                 # Files will be like /data/alpaca/AAPL/1Day/2023.parque

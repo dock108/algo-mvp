@@ -455,10 +455,10 @@ def test_close_method_stops_stream_and_joins_thread(
     # Check that references were cleared by close()
     assert alpaca_adapter.stream is None, "Adapter stream attribute not cleared"
     assert alpaca_adapter.client is None, "Adapter client attribute not cleared"
-    assert (
-        alpaca_adapter._is_running is False
-    ), "Adapter _is_running flag not set to False"
+    assert alpaca_adapter._is_running is False, (
+        "Adapter _is_running flag not set to False"
+    )
     # Also check that the stream_thread attribute on the adapter is cleared
-    assert (
-        alpaca_adapter.stream_thread is None
-    ), "Adapter stream_thread attribute not cleared"
+    assert alpaca_adapter.stream_thread is None, (
+        "Adapter stream_thread attribute not cleared"
+    )
