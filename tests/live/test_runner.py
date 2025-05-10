@@ -1,8 +1,10 @@
 import time
+import asyncio  # Add asyncio import for event loop management if needed
 from unittest.mock import MagicMock, patch
 
 import backtrader as bt
 import pytest
+import pytest_asyncio  # For async fixtures
 
 from algo_mvp.live.adapters.mock import MockBrokerAdapter
 from algo_mvp.live.runner import LiveRunner
@@ -35,84 +37,91 @@ def live_runner_config(mock_broker_adapter):
     }
 
 
-@pytest.fixture
-def live_runner(live_runner_config):
-    return LiveRunner(**live_runner_config)
+@pytest_asyncio.fixture
+async def live_runner(live_runner_config):  # Changed to async fixture
+    runner = LiveRunner(**live_runner_config)
+    yield runner
+    # Teardown: ensure runner is stopped
+    if runner.status() == "running" or runner.status() == "error":
+        await runner.stop()  # Await the async stop method
 
 
+@pytest.mark.asyncio  # Mark test as async
 @patch("backtrader.Cerebro.run")
-def test_liverunner_start_stop_status(mock_cerebro_run, live_runner):
+async def test_liverunner_start_stop_status(mock_cerebro_run, live_runner):  # Add async
     """Test the start, stop, and status methods of LiveRunner."""
     assert live_runner.status() == "stopped"
 
-    # Mock cerebro.run to avoid actual Backtrader loop
     mock_cerebro_run.side_effect = lambda: time.sleep(0.2)  # Simulate some work
 
     live_runner.start()
     assert live_runner.status() == "running"
-    # Give the thread a moment to actually start and cerebro.run to be called
-    time.sleep(0.1)  # Adjust if tests are flaky
+    await asyncio.sleep(0.1)  # Use asyncio.sleep
     mock_cerebro_run.assert_called_once()
 
-    live_runner.stop()
-    # It might take a moment for the thread to join and status to update
-    time.sleep(
-        0.3
-    )  # Increased from 0.1 to allow cerebro run to finish and thread to join
+    await live_runner.stop()  # Await stop
+    # stop() now handles thread joining and async adapter close internally.
+    # The status should be updated by stop() method itself.
+    # A small sleep might still be needed if status update isn't immediate after await, but try without first.
+    # await asyncio.sleep(0.1)  # May or may not be needed
     assert live_runner.status() == "stopped"
 
     # Test starting again
     live_runner.start()
     assert live_runner.status() == "running"
-    time.sleep(0.1)
-    live_runner.stop()
-    time.sleep(0.3)
+    await asyncio.sleep(0.1)
+    await live_runner.stop()
+    # await asyncio.sleep(0.1)  # May or may not be needed
     assert live_runner.status() == "stopped"
 
 
+@pytest.mark.asyncio  # Mark test as async
 @patch("backtrader.Cerebro.runstop")
 @patch("backtrader.Cerebro.run")
-def test_liverunner_stop_calls_cerebro_runstop(
+async def test_liverunner_stop_calls_cerebro_runstop(  # Add async
     mock_cerebro_run, mock_cerebro_runstop, live_runner
 ):
     mock_cerebro_run.side_effect = lambda: time.sleep(0.1)  # Keep running briefly
     live_runner.start()
-    time.sleep(0.05)  # Ensure thread is running
-    live_runner.stop()
-    time.sleep(0.2)  # Allow stop to process
+    await asyncio.sleep(0.05)  # Use asyncio.sleep
+    await live_runner.stop()  # Await stop
+    # await asyncio.sleep(0.05)  # stop() should handle necessary waits
     mock_cerebro_runstop.assert_called_once()
 
 
+@pytest.mark.asyncio  # Mark test as async
 @patch("backtrader.Cerebro")
-def test_liverunner_status_updates_on_error(MockCerebro, live_runner_config, caplog):
+async def test_liverunner_status_updates_on_error(
+    MockCerebro, live_runner_config, caplog
+):  # Add async
     """Test that status becomes 'error' if cerebro.run() raises an exception."""
-    # Configure the mock Cerebro instance that will be created by LiveRunner
     mock_cerebro_instance = MockCerebro.return_value
     mock_cerebro_instance.run.side_effect = Exception("Test Cerebro Error")
-    mock_cerebro_instance.runstop = (
-        MagicMock()
-    )  # Ensure runstop exists for the stop() method
+    mock_cerebro_instance.runstop = MagicMock()
 
     on_error_callback = MagicMock()
-
-    # Create runner instance for this test, potentially with the callback
     live_runner_config["on_error"] = on_error_callback
     runner = LiveRunner(**live_runner_config)
-    # runner.on_error = on_error_callback # This is also fine
 
-    runner.start()  # This will now use the patched Cerebro which raises on .run()
-
-    # Wait for the thread to execute and the exception to occur
-    time.sleep(0.2)  # Adjust if needed
+    runner.start()
+    await asyncio.sleep(0.2)  # Use asyncio.sleep
 
     assert runner.status() == "error"
+    # Since runner.start() itself is synchronous but starts a thread that encounters error,
+    # runner.stop() might be needed for full cleanup if it was designed to be called.
+    # However, if status is 'error', stop() logic might behave differently.
+    # The new stop() handles being called in error state.
+    await runner.stop()  # Ensure cleanup, even if it's mostly for the adapter
+
     on_error_callback.assert_called_once()
     assert isinstance(on_error_callback.call_args[0][0], Exception)
     assert "Error during run: Test Cerebro Error" in caplog.text  # Check log
+    assert runner._thread is None
 
 
+@pytest.mark.asyncio  # Mark test as async
 @patch("algo_mvp.live.runner.LiveRunner._import_strategy")
-def test_liverunner_strategy_import_error(
+async def test_liverunner_strategy_import_error(
     mock_import_strategy, live_runner_config, caplog
 ):
     """Test that an error during strategy import is handled."""
@@ -135,8 +144,11 @@ def test_liverunner_strategy_import_error(
     assert runner._thread is None  # Ensure thread was not created/started
 
 
+@pytest.mark.asyncio  # Mark test as async
 @patch("backtrader.Cerebro.run")
-def test_liverunner_handles_on_trade_callback(mock_cerebro_run, live_runner_config):
+async def test_liverunner_handles_on_trade_callback(
+    mock_cerebro_run, live_runner_config
+):  # Add async
     """Test that LiveRunner can be initialized with an on_trade callback."""
     mock_on_trade = MagicMock()
     live_runner_config["on_trade"] = mock_on_trade
@@ -144,23 +156,24 @@ def test_liverunner_handles_on_trade_callback(mock_cerebro_run, live_runner_conf
     runner = LiveRunner(**live_runner_config)
     mock_cerebro_run.side_effect = lambda: time.sleep(0.1)
     runner.start()
-    time.sleep(0.05)
+    await asyncio.sleep(0.05)
     # At this stage, we're only testing registration. Actual invocation would require
     # the strategy to make a trade and the broker/cerebro to signal it.
     # The LiveRunner currently just logs callback registration.
     # A deeper test would mock the strategy and broker interaction.
     # For now, if start() completes without error, it implies the callback was accepted.
     assert runner.status() == "running"
-    runner.stop()
-    time.sleep(0.2)
+    await runner.stop()  # Await stop
+    # await asyncio.sleep(0.05)
 
 
 # To test MockBrokerAdapter interaction, we need a strategy that actually tries to order.
 # The DummyStrategy above has been modified to attempt a buy.
 
 
+@pytest.mark.asyncio  # Mark test as async
 @patch("backtrader.Cerebro.run")  # We still mock cerebro.run for this test
-def test_liverunner_with_mockbroker_order_flow(
+async def test_liverunner_with_mockbroker_order_flow(  # Add async
     mock_cerebro_run, live_runner_config, caplog
 ):
     """Test that MockBrokerAdapter receives order calls via a strategy."""
@@ -174,7 +187,7 @@ def test_liverunner_with_mockbroker_order_flow(
     runner = LiveRunner(**live_runner_config)
 
     # Simulate Cerebro running and the strategy placing an order
-    def simulate_run_and_order():
+    def simulate_run_and_order():  # Keep this synchronous
         # This is a simplified simulation of what happens inside cerebro.run()
         # when a strategy calls self.buy() or self.sell().
         # In a real scenario, Backtrader would manage the data feed and call strategy.next().
@@ -225,7 +238,7 @@ def test_liverunner_with_mockbroker_order_flow(
     mock_cerebro_run.side_effect = simulate_run_and_order
 
     runner.start()
-    time.sleep(0.3)  # Let run simulation complete
+    await asyncio.sleep(0.3)  # Let run simulation complete
 
     # Since cerebro.setbroker is not yet implemented correctly with a bt.BrokerBase adapter,
     # the DummyStrategy's self.buy() will not reach mock_broker.submit_order through Backtrader.
@@ -236,10 +249,10 @@ def test_liverunner_with_mockbroker_order_flow(
     # To proceed with a meaningful test of the skeleton, we will bypass this by asserting
     # something simpler for now, or acknowledge this limitation in the test design.
     # For example, check if the runner starts and stops cleanly even with this setup.
-    assert runner.status() == "running"  # Changed from error to running
+    assert runner.status() == "running"
 
-    runner.stop()
-    time.sleep(0.2)
+    await runner.stop()  # Await stop
+    # await asyncio.sleep(0.05)
     assert runner.status() == "stopped"
 
     # If the broker was properly integrated:

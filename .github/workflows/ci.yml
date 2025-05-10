@@ -42,3 +42,18 @@ jobs:
     - name: Run tests with coverage
       run: |
         poetry run pytest --cov=src --cov-fail-under=80
+
+  lint-format-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11' # Or your preferred Python version for linting
+    - name: Install Ruff
+      run: pip install ruff
+    - name: Run Ruff Linter
+      run: ruff check .
+    - name: Run Ruff Formatter Check
+      run: ruff format --check .

@@ -125,7 +125,9 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
                 logger.info(
                     "Access token is missing or expired. Attempting to refresh."
                 )
-                await self._get_access_token()  # This will update self.access_token_details
+                await (
+                    self._get_access_token()
+                )  # This will update self.access_token_details
                 if self.access_token_details:  # Check again after refresh attempt
                     headers["Authorization"] = (
                         f"Bearer {self.access_token_details.accessToken}"
@@ -323,7 +325,9 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
             # Tradovate often uses a "sync request" to start data flow for accounts/users.
             # Let's ensure the accountId is known.
             if not self._account_id:
-                await self._get_initial_account_data()  # Fetch account list to get an ID
+                await (
+                    self._get_initial_account_data()
+                )  # Fetch account list to get an ID
 
             if self._account_id:
                 # Example sync request: {"url":"user/syncrequest","body":{"users":[<userId>],"accounts":[<accountId>]}}
@@ -375,7 +379,8 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
                     logger.warning(
                         "WebSocket not connected, cannot send heartbeat. Attempting to reconnect..."
                     )
-                    asyncio.create_task(self.connect())  # Attempt to reconnect
+                    if not self.is_disconnecting:
+                        asyncio.create_task(self.connect())  # Attempt to reconnect
                     await asyncio.sleep(
                         HEARTBEAT_INTERVAL
                     )  # Wait before next attempt if reconnect fails quickly
@@ -419,10 +424,10 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
                         "WebSocket connection lost in listener. Attempting reconnect."
                     )
                     if not self.is_disconnecting:
-                        await self.connect()  # Re-establish connection
+                        asyncio.create_task(self.connect())  # Changed to create_task
                         if (
                             not self.ws_connection or self.ws_connection.closed
-                        ):  # If connect failed
+                        ):  # If connect task didn't immediately restore
                             await asyncio.sleep(
                                 RECONNECT_DELAY
                             )  # Wait before retrying listen loop
@@ -539,33 +544,42 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
                             "WebSocket connection appears closed or unresponsive after timeout."
                         )
                         if not self.is_disconnecting:
-                            await self.connect()  # Attempt to reconnect
+                            asyncio.create_task(
+                                self.connect()
+                            )  # Changed to create_task
                         else:
                             break  # Exit if disconnecting
                 except websockets.exceptions.ConnectionClosedOK:
                     logger.info("WebSocket connection closed gracefully by server.")
                     if not self.is_disconnecting:
-                        await self.connect()  # Reconnect if not intentional
+                        asyncio.create_task(self.connect())  # Changed to create_task
                     else:
-                        break
+                        break  # Exit if disconnecting
                 except websockets.exceptions.ConnectionClosedError as e:
                     logger.warning(
-                        f"WebSocket connection closed with error: {e}. Attempting to reconnect."
+                        f"WebSocket connection closed unexpectedly in listener: {e}. Attempting reconnect."
                     )
                     if not self.is_disconnecting:
-                        await self.connect()
+                        asyncio.create_task(self.connect())  # Changed to create_task
                     else:
-                        break
-                except (
-                    websockets.exceptions.ConnectionClosed
-                ) as e:  # Catchall for other closed types
-                    logger.warning(
-                        f"WebSocket connection closed unexpectedly: {e}. Attempting to reconnect."
+                        break  # Exit if disconnecting
+                except asyncio.CancelledError:
+                    logger.info("WebSocket listener task cancelled.")
+                except Exception as e:
+                    logger.error(
+                        f"Fatal error in WebSocket listener: {e}", exc_info=True
                     )
-                    if not self.is_disconnecting:
-                        await self.connect()
-                    else:
-                        break
+                finally:
+                    logger.info("WebSocket listener stopped.")
+                    if (
+                        self.ws_connection
+                        and not self.ws_connection.closed
+                        and not self.is_disconnecting
+                    ):
+                        logger.info(
+                            "Listener stopped, but WS still open and not disconnecting. This might be an issue."
+                        )
+                    # Do not close WS connection here as it might be managed by connect/close methods
 
         except asyncio.CancelledError:
             logger.info("WebSocket listener task cancelled.")
@@ -982,9 +996,7 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
             await self._get_initial_account_data()
             if not self._account_id:
                 logger.error("Failed to get account ID, cannot retrieve cash.")
-                return (
-                    self._cash
-                )  # Returns {} if _get_initial_account_data didn't set it and it was initialized to {}
+                return self._cash  # Returns {} if _get_initial_account_data didn't set it and it was initialized to {}
 
         try:
             response = await self._make_request("GET", "/account/list")

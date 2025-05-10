@@ -2,6 +2,7 @@ import argparse
 import signal
 import sys
 import time
+import asyncio
 
 import yaml
 from rich.console import Console
@@ -64,9 +65,17 @@ def main():
     def signal_handler(sig, frame):
         console.print("\nCtrl-C detected. Shutting down runners...", style="yellow")
         for runner in runners:
-            runner.stop()
-        # Allow time for threads to join
-        time.sleep(1)  # Adjust as needed, or implement more robust thread joining wait
+            try:
+                asyncio.run(runner.stop())
+            except Exception as e:
+                console.print(
+                    f"Error stopping runner {getattr(runner, 'strategy_path', '?')}: {e}",
+                    style="bold red",
+                )
+        # Allow time for threads to join and async operations if any part of stop was synchronous before async part
+        time.sleep(
+            1
+        )  # This sleep might still be useful for thread joining within stop()
         console.print("All runners stopped. Exiting.", style="green")
         sys.exit(0)
 
@@ -97,7 +106,13 @@ def main():
             if (
                 runner.status() == "running"
             ):  # Check if not already stopped by signal handler
-                runner.stop()
+                try:
+                    asyncio.run(runner.stop())
+                except Exception as e:
+                    console.print(
+                        f"Error stopping runner in finally: {getattr(runner, 'strategy_path', '?')}: {e}",
+                        style="bold red",
+                    )
         console.print("CLI cleanup complete.", style="dim")
 
 

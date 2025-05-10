@@ -1,6 +1,7 @@
 import importlib
 import logging  # Import logging
 import threading
+import asyncio
 
 import backtrader as bt
 
@@ -176,45 +177,54 @@ class LiveRunner:
                 self.on_error(e)
             # Do not proceed to start thread if setup failed. self._thread remains None.
 
-    def stop(self):
-        if self._status != "running":
-            self._log("Not running.", level=logging.WARNING)  # Use logging level
+    async def stop(self):
+        if self._status != "running" and self._status != "error":
+            self._log(
+                f"Not running (status: {self._status}). Stop command ignored.",
+                level=logging.WARNING,
+            )
             return
 
-        self._log("Stopping...", level=logging.INFO)  # Use logging level
+        self._log(f"Stopping (current status: {self._status})...", level=logging.INFO)
         if self.cerebro:
-            self.cerebro.runstop()  # Request graceful stop
+            self.cerebro.runstop()
 
         if self._thread and self._thread.is_alive():
-            self._thread.join(
-                timeout=5
-            )  # Wait for thread to finish, adjusted timeout to 5s
+            self._thread.join(timeout=5)  # Wait for thread to finish
             if self._thread.is_alive():
                 self._log(
-                    "Thread did not stop in time.", level=logging.ERROR
-                )  # Use logging level
-                self._status = "error"
+                    "Backtrader thread did not stop in time.", level=logging.ERROR
+                )
             else:
-                self._log(
-                    "Stopped successfully.", level=logging.INFO
-                )  # Use logging level
+                self._log("Backtrader thread stopped.", level=logging.INFO)
         else:
             self._log(
-                "No active thread to stop.", level=logging.WARNING
-            )  # Use logging level
+                "No active Backtrader thread to stop or already joined.",
+                level=logging.WARNING,
+            )
+        self._thread = None  # Explicitly set thread to None after handling
 
         # Clean up broker adapter resources
         if self.broker_adapter and hasattr(self.broker_adapter, "close"):
             try:
                 self._log("Closing broker adapter connections...", level=logging.INFO)
-                self.broker_adapter.close()
+                if asyncio.iscoroutinefunction(self.broker_adapter.close):
+                    await self.broker_adapter.close()
+                else:
+                    self.broker_adapter.close()
                 self._log("Broker adapter connections closed.", level=logging.INFO)
             except Exception as e:
                 self._log(f"Error closing broker adapter: {e}", level=logging.ERROR)
                 if self.on_error:
                     self.on_error(e)
 
-        self._status = "stopped"
+        # Final status update
+        if self._status != "error":
+            self._status = "stopped"
+        self._log(
+            f"LiveRunner stop process complete. Final status: {self._status}",
+            level=logging.INFO,
+        )
 
     def status(self) -> str:
         return self._status
