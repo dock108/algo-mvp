@@ -1,6 +1,6 @@
 from typing import Any, Dict, List
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class RunnerConfig(BaseModel):
@@ -11,8 +11,9 @@ class RunnerConfig(BaseModel):
     symbol: str
     timeframe: str
 
-    @validator("strategy")
-    def strategy_must_contain_colon(cls, value):
+    @field_validator("strategy")
+    @classmethod
+    def strategy_must_contain_colon(cls, value: str) -> str:
         if ":" not in value:
             raise ValueError("strategy must be in format module.path:ClassName")
         return value

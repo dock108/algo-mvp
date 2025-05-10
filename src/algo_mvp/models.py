@@ -1,7 +1,8 @@
 from typing import Literal
 
 import pendulum
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator, model_validator
+from typing_extensions import Self
 
 
 class BaseConfig(BaseModel):
@@ -10,36 +11,26 @@ class BaseConfig(BaseModel):
     start: str
     end: str
 
-    @validator("start", "end")
-    def ensure_date_format(cls, v):
+    @field_validator("start", "end")
+    @classmethod
+    def ensure_date_format(cls, v: str) -> str:
         try:
             pendulum.parse(v)
-        except Exception:
+        except Exception as e:
             raise ValueError(
-                "Dates must be in a recognizable format (e.g., YYYY-MM-DD)"
+                f"Dates must be in a recognizable format (e.g., YYYY-MM-DD). Error: {e}"
             )
         return v
 
-    @validator("end")
-    def start_must_be_before_end(cls, v, values):
-        if "start" in values and values["start"]:
-            # Ensure 'start' is parsed if it's valid, otherwise this validator might error
-            # on an already invalid 'start' date before start.ensure_date_format runs for it.
-            # Pydantic runs validators in order of field definition then validator definition.
-            try:
-                start_dt = pendulum.parse(values["start"])
-                end_dt = pendulum.parse(
-                    v
-                )  # v is already validated by ensure_date_format for 'end'
-                if start_dt >= end_dt:
-                    raise ValueError("Start date must be before end date")
-            except (
-                ValueError
-            ):  # Catches parsing errors from pendulum.parse if 'start' was bad
-                # If start date itself is invalid, let its own validator handle it.
-                # This validator should only care about the relationship if both dates are validly formatted.
-                pass
-        return v
+    @model_validator(mode="after")
+    def start_must_be_before_end(self) -> Self:
+        # This validator runs after individual field validation,
+        # so self.start and self.end are expected to be valid date strings.
+        start_dt = pendulum.parse(self.start)
+        end_dt = pendulum.parse(self.end)
+        if start_dt >= end_dt:
+            raise ValueError("Start date must be before end date")
+        return self
 
 
 class AlpacaConfig(BaseConfig):

@@ -97,3 +97,29 @@
 
 ### Fixed
 - Fixed potential thread/resource leaks when shutting down the LiveRunner.
+
+## [Unreleased] - YYYY-MM-DD
+
+### Fixed
+- Resolved `ModuleNotFoundError` in GitHub Actions for `algo_mvp` by ensuring root package installation and correct `pyproject.toml` `packages` directive for `src` layout.
+- Addressed hanging tests in `tests/live/adapters/test_alpaca_adapter.py` by:
+    - Converting synchronous test functions calling async methods to `async def` with `@pytest.mark.asyncio`.
+    - Ensuring mocked client methods (e.g., `submit_order_async`) are `AsyncMock`.
+    - Refining `test_close_method_stops_stream_and_joins_thread` to correctly mock and assert thread termination.
+- Fixed hanging tests and assertion errors in `tests/live/adapters/test_mock.py` by:
+    - Correcting assertions for `MockBrokerAdapter` methods (`get_cash`, `get_positions`) to match actual return types (dict for cash, List[Position] for positions).
+    - Updating `test_mock_adapter_cancel_order` to assert boolean return from `cancel_order`.
+
+### Changed
+- Migrated Pydantic from V1 to V2:
+    - Replaced `validator` with `field_validator` and `model_validator`.
+    - Updated validator signatures (e.g., `@classmethod`, `self` for `model_validator`).
+    - Replaced `model.dict()` with `model.model_dump()`.
+    - Applied to `src/algo_mvp/live/config.py`, `src/algo_mvp/models.py`, `src/algo_mvp/backtest/engine.py`.
+- Updated pandas resampling rule in `src/algo_mvp/data/tradovate.py` from `"T"` to `"min"` to resolve `FutureWarning`.
+
+### Removed
+- N/A
+
+### Added
+- N/A

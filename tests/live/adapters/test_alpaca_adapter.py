@@ -181,7 +181,8 @@ def mock_alpaca_order_obj(
     return mock_order
 
 
-def test_submit_order_successful(alpaca_adapter, mock_trading_client):
+@pytest.mark.asyncio
+async def test_submit_order_successful(alpaca_adapter, mock_trading_client):
     alpaca_adapter.client = mock_trading_client  # Ensure adapter uses the mock API
 
     symbol = "SPY"
@@ -191,11 +192,14 @@ def test_submit_order_successful(alpaca_adapter, mock_trading_client):
 
     # Configure the mock api.submit_order to return a mock Alpaca order object
     mock_returned_alpaca_order = mock_alpaca_order_obj(symbol, qty, side, order_type)
-    mock_trading_client.submit_order.return_value = mock_returned_alpaca_order
+    # Since submit_order_async is part of TradingClient, we mock it here
+    mock_trading_client.submit_order_async = AsyncMock(
+        return_value=mock_returned_alpaca_order
+    )
 
-    internal_order = alpaca_adapter.submit_order(symbol, qty, side, order_type)
+    internal_order = await alpaca_adapter.submit_order(symbol, qty, side, order_type)
 
-    mock_trading_client.submit_order.assert_called_once()
+    mock_trading_client.submit_order_async.assert_called_once()
 
     assert isinstance(internal_order, Order)
     assert internal_order.id == mock_returned_alpaca_order.id
@@ -208,26 +212,30 @@ def test_submit_order_successful(alpaca_adapter, mock_trading_client):
     # Add more assertions for mapped fields like timestamps if necessary
 
 
-def test_submit_order_with_limit_price(alpaca_adapter, mock_trading_client):
+@pytest.mark.asyncio
+async def test_submit_order_with_limit_price(alpaca_adapter, mock_trading_client):
     alpaca_adapter.client = mock_trading_client
     symbol, qty, side, order_type, limit_price = "AAPL", 5, "buy", "limit", 150.00
 
     mock_returned_alpaca_order = mock_alpaca_order_obj(symbol, qty, side, order_type)
     mock_returned_alpaca_order.limit_price = str(limit_price)
-    mock_trading_client.submit_order.return_value = mock_returned_alpaca_order
+    mock_trading_client.submit_order_async = AsyncMock(
+        return_value=mock_returned_alpaca_order
+    )
 
-    internal_order = alpaca_adapter.submit_order(
+    internal_order = await alpaca_adapter.submit_order(
         symbol, qty, side, order_type, limit_price=limit_price
     )
 
-    mock_trading_client.submit_order.assert_called_once()
+    mock_trading_client.submit_order_async.assert_called_once()
     assert internal_order.limit_price == limit_price
 
 
 # from alpaca_trade_api.rest import APIError # Import APIError - Moved to top
 
 
-def test_submit_order_retry_on_api_error(
+@pytest.mark.asyncio
+async def test_submit_order_retry_on_api_error(
     alpaca_adapter, mock_trading_client, mock_live_runner
 ):
     alpaca_adapter.client = mock_trading_client
@@ -237,41 +245,43 @@ def test_submit_order_retry_on_api_error(
     mock_returned_successful_order = mock_alpaca_order_obj(
         symbol, qty, side, order_type, order_id="retry_success_id"
     )
-    mock_trading_client.submit_order.side_effect = [
-        Exception("Internal Server Error"),  # dostupny error code
-        Exception("Service Unavailable"),
-        mock_returned_successful_order,
-    ]
+    mock_trading_client.submit_order_async = AsyncMock(
+        side_effect=[
+            Exception("Internal Server Error"),
+            Exception("Service Unavailable"),
+            mock_returned_successful_order,
+        ]
+    )
 
-    internal_order = alpaca_adapter.submit_order(symbol, qty, side, order_type)
+    internal_order = await alpaca_adapter.submit_order(symbol, qty, side, order_type)
 
-    assert mock_trading_client.submit_order.call_count == 3
+    assert mock_trading_client.submit_order_async.call_count == 3
     assert internal_order is not None
     assert internal_order.id == "retry_success_id"
     mock_live_runner.on_error.assert_not_called()  # No permanent failure error
 
 
-def test_submit_order_permanent_failure_after_retries(
+@pytest.mark.asyncio
+async def test_submit_order_permanent_failure_after_retries(
     alpaca_adapter, mock_trading_client, mock_live_runner
 ):
     alpaca_adapter.client = mock_trading_client
     symbol, qty, side, order_type = "GOOG", 1, "buy", "market"
 
-    mock_trading_client.submit_order.side_effect = Exception("Forbidden")
+    mock_trading_client.submit_order_async = AsyncMock(
+        side_effect=Exception("Forbidden")
+    )
 
     # The submit_order with tenacity will raise RetryError after exhausting retries
     # We need to catch that here rather than expecting it to return None
     from tenacity import RetryError
 
-    try:
-        internal_order = alpaca_adapter.submit_order(symbol, qty, side, order_type)
-        assert False, "Expected RetryError but nothing was raised"
-    except RetryError:
-        pass  # This is expected
+    with pytest.raises(RetryError):  # Check for RetryError
+        await alpaca_adapter.submit_order(symbol, qty, side, order_type)
 
-    # Check that submit_order was called the correct number of times
+    # Check that submit_order_async was called the correct number of times
     assert (
-        mock_trading_client.submit_order.call_count == 3
+        mock_trading_client.submit_order_async.call_count == 3
     )  # Tenacity stop_after_attempt=3
 
     # The live_runner.on_error would be called in a real application, but since
@@ -423,19 +433,32 @@ def test_close_method_stops_stream_and_joins_thread(
     # First connect to set up the stream and thread
     alpaca_adapter.connect()
 
-    # Mock the thread's join method
-    alpaca_adapter.stream_thread.join = MagicMock()
+    # Ensure the thread object exists before trying to mock its join method
+    assert alpaca_adapter.stream_thread is not None, "Stream thread was not created"
+
+    # Get a reference to the actual thread object created by connect()
+    actual_thread_object = alpaca_adapter.stream_thread
+
+    # Create a MagicMock for the join method and assign it to the actual thread object's join attribute
+    mocked_join_on_thread = MagicMock()
+    actual_thread_object.join = mocked_join_on_thread
 
     # Call close
     alpaca_adapter.close()
 
     # Check that the stream was stopped
-    assert mock_trading_stream.stop.called
+    mock_trading_stream.stop.assert_called_once()
 
-    # Check that the thread was joined
-    assert alpaca_adapter.stream_thread.join.called
+    # Check that the mocked join method on the thread object was called
+    mocked_join_on_thread.assert_called_once()
 
-    # Check that references were cleared
-    assert alpaca_adapter.stream is None
-    assert alpaca_adapter.client is None
-    assert alpaca_adapter._is_running is False
+    # Check that references were cleared by close()
+    assert alpaca_adapter.stream is None, "Adapter stream attribute not cleared"
+    assert alpaca_adapter.client is None, "Adapter client attribute not cleared"
+    assert (
+        alpaca_adapter._is_running is False
+    ), "Adapter _is_running flag not set to False"
+    # Also check that the stream_thread attribute on the adapter is cleared
+    assert (
+        alpaca_adapter.stream_thread is None
+    ), "Adapter stream_thread attribute not cleared"

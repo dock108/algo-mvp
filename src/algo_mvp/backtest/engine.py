@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Type, Union
 import pandas as pd
 import vectorbt as vbt
 import yaml
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
@@ -39,7 +39,8 @@ class BacktestParams(BaseModel):
     )
     atr_len: Union[int, List[int]] = Field(..., description="ATR length values")
 
-    @validator("band_mult")
+    @field_validator("band_mult", mode="before")
+    @classmethod
     def validate_band_mult(cls, v):
         if isinstance(v, list):
             for val in v:
@@ -53,7 +54,8 @@ class BacktestParams(BaseModel):
             )
         return v
 
-    @validator("atr_len")
+    @field_validator("atr_len", mode="before")
+    @classmethod
     def validate_atr_len(cls, v):
         if isinstance(v, list):
             for val in v:
@@ -83,14 +85,16 @@ class BacktestConfig(BaseModel):
         description="Metrics to calculate",
     )
 
-    @validator("provider")
-    def validate_provider(cls, v):
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, v: str) -> str:
         if v.lower() not in ["alpaca", "tradovate"]:
             raise ValueError(f"Provider must be 'alpaca' or 'tradovate', got '{v}'")
         return v.lower()
 
-    @validator("metrics")
-    def validate_metrics(cls, v):
+    @field_validator("metrics")
+    @classmethod
+    def validate_metrics(cls, v: List[str]) -> List[str]:
         allowed_metrics = [
             "sharpe",
             "max_drawdown",
@@ -99,12 +103,14 @@ class BacktestConfig(BaseModel):
             "expectancy",
             "exposure",
         ]
+        validated_metrics = []
         for metric in v:
             if metric.lower() not in allowed_metrics:
                 raise ValueError(
                     f"Metric '{metric}' not in allowed metrics: {allowed_metrics}"
                 )
-        return [m.lower() for m in v]
+            validated_metrics.append(metric.lower())
+        return validated_metrics
 
 
 class BacktestEngine:
@@ -229,7 +235,7 @@ class BacktestEngine:
 
     def _expand_parameters(self) -> List[Dict[str, Any]]:
         """Expand parameter lists into a grid for sweep."""
-        params = self.config.params.dict()
+        params = self.config.params.model_dump()
         param_grid = []
 
         # Track which parameters are lists for grid sweep

@@ -106,9 +106,12 @@ class TradovateFetcher:
         # Determine resampling rule
         rule = timeframe_str
         if "Min" in timeframe_str:
-            rule = timeframe_str.replace("Min", "T")
+            # Replace "Min" with "min" for pandas >= 2.2 compatibility (previously "T")
+            rule = timeframe_str.replace("Min", "min")
         elif "H" in timeframe_str and "Min" not in timeframe_str:
+            # Hourly rule, e.g., "1H", is generally fine
             rule = timeframe_str
+        # Add other rules like "D", "W", "M" if needed, ensuring they are pandas compatible
 
         if self.verbose:
             print(f"Resampling ticks with rule: {rule}")
