@@ -5,7 +5,6 @@
 
 # alpaca_trade_api = pytest.importorskip("alpaca_trade_api") # Option 1: Skip if not importable
 
-import datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -14,7 +13,6 @@ from alpaca.common.exceptions import APIError  # This import is from alpaca-py
 
 # Update imports for alpaca-py
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.timeframe import TimeFrame
 
 from algo_mvp.data.alpaca import AlpacaFetcher
 from algo_mvp.models import AlpacaConfig
