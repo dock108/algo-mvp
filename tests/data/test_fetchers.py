@@ -453,7 +453,7 @@ def test_fetch_data_partitioning(
     )
 
     mocker.patch.object(fetcher, "_check_existing_data", return_value=False)
-    mock_write_table = mocker.patch("pyarrow.parquet.write_table")
+    # mock_write_table = mocker.patch("pyarrow.parquet.write_table") # Remove this mock, we want actual writes
 
     # Create a mock Series for memory_usage return value
     memory_usage_return = pd.Series(
@@ -462,7 +462,7 @@ def test_fetch_data_partitioning(
     # Mock memory_usage to return the Series with a sum method
     mocker.patch.object(pd.DataFrame, "memory_usage", return_value=memory_usage_return)
 
-    mock_mkdir = mocker.patch.object(Path, "mkdir")
+    #    mock_mkdir = mocker.patch.object(Path, "mkdir") # Remove this, we need actual mkdir for pq.write_table
 
     base_output_dir = tmp_path / fetcher._get_base_path()
     mocker.patch.object(fetcher, "_get_base_path", return_value=base_output_dir)
@@ -471,7 +471,7 @@ def test_fetch_data_partitioning(
     fetcher.provider_fetcher.fetch.assert_called_once()
 
     years = large_multiyear_dataframe.index.year.unique()
-    assert mock_write_table.call_count == len(years)
+    # assert mock_write_table.call_count == len(years) # Cannot assert call_count if not mocked
 
     expected_calls = []
     for year in years:
@@ -479,80 +479,210 @@ def test_fetch_data_partitioning(
         expected_calls.append(call(mocker.ANY, expected_file_path))
     # mock_write_table.assert_has_calls(expected_calls, any_order=True) # This is more precise but complex
 
-    mock_mkdir.assert_any_call(parents=True, exist_ok=True)  # For the base_output_dir
+    #    mock_mkdir.assert_any_call(parents=True, exist_ok=True)  # Cannot assert if not mocked
+
+    # Assert the provider fetcher's fetch method is called
+    mock_alpaca_provider_instance.fetch.assert_called_once()
+
+    # For 2022 and 2023, two partitions.
+    # Check if files like "data/alpaca/AAPL/1Day_2022.parquet" exist
+    base_path = (
+        fetcher._get_base_path()
+    )  # This is a directory like data/alpaca/AAPL/1Day
+    year_files = list(base_path.glob("*.parquet"))  # Check for year-partitioned files
+    assert len(year_files) >= 2  # Exactly 2 for 2022 and 2023
+
+    # Example check for one file
+    # Example: Check for 2022 data if large_multiyear_dataframe includes it
+    # This part of the assertion needs to be robust to the actual years in large_multiyear_dataframe
+    # For the provided large_multiyear_dataframe, it has 2022 and 2023.
+    assert (base_path / "2022.parquet").exists()
+    assert (base_path / "2023.parquet").exists()
 
 
-@pytest.mark.skip(
-    reason="Skipping due to persistent and complex mocking issues with patching DataFetcher._write_partitioned_data for this specific error path."
-)
-def test_fetch_data_partitioning_unlink_error(
+@pytest.mark.parametrize(
+    "fail_on_first_write", [True, False]
+)  # Test failing first and second write
+def test_fetch_data_partitioning_write_error(
     mocker,
     mock_alpaca_provider_instance,
     alpaca_config_fixture,
     large_multiyear_dataframe,
     tmp_path,
     capsys,
+    fail_on_first_write,
 ):
-    """Test error handling when unlinking existing single file during partitioning."""
-    alpaca_config_fixture.start = large_multiyear_dataframe.index.min().strftime(
-        "%Y-%m-%d"
+    """Test graceful handling of OSError during pq.write_table in partitioning."""
+    test_specific_data_dir = tmp_path / "test_data_output_write_error"
+    sanitized_timeframe = alpaca_config_fixture.timeframe.replace(" ", "_").replace(
+        ":", "-"
     )
-    alpaca_config_fixture.end = large_multiyear_dataframe.index.max().strftime(
-        "%Y-%m-%d"
-    )
-    fetcher = DataFetcher(
-        config=alpaca_config_fixture, verbose=True
-    )  # verbose=True to check print
-
-    mocker.patch.object(
-        fetcher.provider_fetcher, "fetch", return_value=large_multiyear_dataframe
+    expected_base_under_tmp = (
+        test_specific_data_dir
+        / alpaca_config_fixture.provider
+        / alpaca_config_fixture.symbol
+        / sanitized_timeframe
     )
     mocker.patch.object(
-        fetcher, "_check_existing_data", return_value=False
-    )  # Force fetch
+        DataFetcher, "_get_base_path", return_value=expected_base_under_tmp
+    )
 
-    # Make should_partition True
-    # Ensure estimated_size_bytes > PARTITION_SIZE_THRESHOLD_BYTES
+    mock_alpaca_provider_instance.fetch.return_value = large_multiyear_dataframe
+
+    # Mock pq.write_table to raise OSError on the specified attempt
+    # It will be called twice (for 2022 and 2023)
+    write_attempt = 0
+    original_write_table = pq.write_table
+
+    def faulty_write_table(*args, **kwargs):
+        nonlocal write_attempt
+        write_attempt += 1
+        if (fail_on_first_write and write_attempt == 1) or (
+            not fail_on_first_write and write_attempt == 2
+        ):
+            raise OSError("Mocked pq.write_table error")
+        return original_write_table(
+            *args, **kwargs
+        )  # Call original for non-failing attempts
+
+    mocked_pq_write = mocker.patch(
+        "pyarrow.parquet.write_table", side_effect=faulty_write_table
+    )
+
+    fetcher = DataFetcher(config=alpaca_config_fixture, verbose=True)
+
+    mock_memory_usage_series = MagicMock(spec=pd.Series)
+    mock_memory_usage_series.sum.return_value = PARTITION_SIZE_THRESHOLD_BYTES + 1
     mocker.patch.object(
-        pd.DataFrame,
-        "memory_usage",
-        return_value=pd.Series([PARTITION_SIZE_THRESHOLD_BYTES + 1]),
+        pd.DataFrame, "memory_usage", return_value=mock_memory_usage_series
     )
 
-    # Mock _get_base_path to return a mock Path object
-    mock_base_path_for_timeframe = MagicMock(spec=Path)
-    mocker.patch.object(
-        fetcher, "_get_base_path", return_value=mock_base_path_for_timeframe
-    )
+    fetch_result = fetcher.fetch_data(force=True)
 
-    # This mock_single_file will be what base_path_for_timeframe.with_suffix() should return
-    mock_single_file = MagicMock(spec=Path)
-    mock_single_file.exists.return_value = True
-    mock_single_file.unlink.side_effect = OSError("Test unlink error")
-
-    # Configure the mock_base_path_for_timeframe.with_suffix behavior
-    mock_base_path_for_timeframe.with_suffix.return_value = mock_single_file
-
-    # _write_partitioned_data will be called, mock it to prevent actual writes and allow check of return value
-    mock_write_part_method = mocker.patch.object(
-        algo_mvp.data.fetcher.DataFetcher,
-        "_write_partitioned_data",
-        return_value=True,
-        autospec=True,  # Use autospec for existing methods
-    )
-
-    fetcher.fetch_data(force=False)
+    assert (
+        fetch_result is False
+    )  # Should fail because write error is not caught per-partition
 
     captured = capsys.readouterr()
-    assert "Error removing existing single file" in captured.err
-    assert "Test unlink error" in captured.err
+    # The error is caught by the main try-except in fetch_data
+    assert (
+        f"Error writing Parquet file for {alpaca_config_fixture.symbol}: Mocked pq.write_table error"
+        in captured.err
+    )
 
-    mock_write_part_method.assert_called_once()
+    # Ensure pq.write_table was called up to the failure point
+    if fail_on_first_write:
+        assert mocked_pq_write.call_count == 1
+        # The first file (2022) should not exist as write failed
+        path_2022 = expected_base_under_tmp / "2022.parquet"
+        assert not path_2022.exists()
+    else:  # Fails on second write (2023)
+        assert mocked_pq_write.call_count == 2
+        # The first file (2022) should exist
+        path_2022 = expected_base_under_tmp / "2022.parquet"
+        assert path_2022.exists()
+        # The second file (2023) should not exist
+        path_2023 = expected_base_under_tmp / "2023.parquet"
+        assert not path_2023.exists()
 
 
-@pytest.mark.skip(reason="Placeholder test, to be implemented.")
-def test_full_data_fetching_flow():
-    assert False  # Fail until implemented
+# @pytest.mark.skip(reason="Placeholder test, to be implemented.") # Unskip the test
+def test_full_data_fetching_flow(
+    mocker,
+    alpaca_config_fixture,
+    sample_dataframe,
+    mock_alpaca_provider_instance,  # Use the fixture that provides a mocked AlpacaFetcher instance
+    tmp_path,
+    capsys,
+):
+    """
+    Test the full data fetching flow:
+    - Mocks the provider's fetch method.
+    - Ensures DataFetcher writes the data to a Parquet file.
+    - Verifies the content and metadata of the created file.
+    """
+    config = alpaca_config_fixture
+    fetcher = DataFetcher(config=config, verbose=True)  # Initialize DataFetcher
+
+    # mock_alpaca_provider_instance fixture ensures fetcher.provider_fetcher is a mock
+    # and its __init__ was effectively bypassed.
+    # Configure the mock provider_fetcher.fetch to return our sample_dataframe
+    fetcher.provider_fetcher.fetch.return_value = sample_dataframe
+
+    # Mock _get_base_path to use tmp_path for output
+    # The actual filename will be <base_path_val_from_config>.parquet
+    # So, _get_base_path should return the path *without* the .parquet extension
+    sanitized_timeframe = config.timeframe.replace(" ", "_").replace(":", "-")
+    # base_path_for_output will be like tmp_path/data/alpaca/AAPL/1Day
+    base_path_for_output = (
+        tmp_path / config.provider / config.symbol / sanitized_timeframe
+    )
+    expected_output_file = base_path_for_output.with_suffix(".parquet")
+
+    mocker.patch.object(fetcher, "_get_base_path", return_value=base_path_for_output)
+
+    # Ensure the directory structure exists for writing the file
+    # DataFetcher's _write_partitioned_data and _write_single_file handle mkdir
+    # but for direct _get_base_path mock, we might need to ensure parent exists
+    # if _write_single_file doesn't create all parents. Let's assume it does.
+    # If not, an explicit base_path_for_output.parent.mkdir(parents=True, exist_ok=True)
+    # might be needed before calling fetch_data depending on fetcher's internal mkdir logic.
+    # fetcher._write_single_file itself calls base_path.mkdir(parents=True, exist_ok=True)
+    # where base_path is what _get_base_path returns. So, it should be fine.
+
+    # Call fetch_data (force=True to ensure it writes)
+    result = fetcher.fetch_data(force=True)
+    assert result is True
+
+    # Assertions
+    fetcher.provider_fetcher.fetch.assert_called_once_with(
+        symbol=config.symbol,
+        timeframe_str=config.timeframe,
+        start_date_str=config.start,
+        end_date_str=config.end,
+    )
+
+    # 1. Check if the file was created
+    assert expected_output_file.exists(), (
+        f"Output file {expected_output_file} was not created."
+    )
+
+    # 2. Check the content of the file
+    # Read the Parquet file back into a DataFrame
+    # The schema might differ slightly (e.g. index name might be lost if not handled by pyarrow)
+    # so best to compare specific columns or use pandas testing utilities.
+    df_from_file = pd.read_parquet(expected_output_file)
+
+    # Ensure index name is preserved or set for comparison
+    # sample_dataframe has index name 'timestamp'
+    if df_from_file.index.name != sample_dataframe.index.name:
+        df_from_file.index.name = sample_dataframe.index.name
+
+    pd.testing.assert_frame_equal(df_from_file, sample_dataframe, check_dtype=True)
+
+    # 3. Check the custom metadata
+    metadata_from_file = fetcher._read_parquet_custom_metadata(expected_output_file)
+    assert metadata_from_file is not None
+    assert metadata_from_file["provider"] == config.provider
+    assert metadata_from_file["symbol"] == config.symbol
+    assert metadata_from_file["timeframe"] == config.timeframe
+    assert metadata_from_file["config_start_date"] == config.start
+    assert metadata_from_file["config_end_date"] == config.end
+    assert (
+        metadata_from_file["actual_start_date"]
+        == sample_dataframe.index.min().isoformat()
+    )
+    assert (
+        metadata_from_file["actual_end_date"]
+        == sample_dataframe.index.max().isoformat()
+    )
+    assert int(metadata_from_file["num_rows"]) == len(sample_dataframe)
+    assert "downloaded_at_utc" in metadata_from_file
+    assert metadata_from_file["api_version"].startswith("alpaca-trade-api")
+
+    captured = capsys.readouterr()
+    assert f"Proceeding to fetch data for {config.symbol}" in captured.out
+    assert f"Successfully wrote data to {expected_output_file}" in captured.out
 
 
 def test_data_fetcher_placeholder_true():

@@ -172,7 +172,7 @@ def test_expand_parameters(sample_config_file):
 
 
 @pytest.mark.skip(
-    reason="Skipping due to persistent Numba TypeError with vbt.Portfolio.from_signals mocking"
+    reason="Skipping due to persistent Numba TypeError with vbt.Portfolio.from_signals mocking even when patched."
 )
 @patch("algo_mvp.backtest.engine.vbt.Portfolio.from_signals")
 @patch("algo_mvp.backtest.engine.importlib.import_module")
@@ -211,6 +211,8 @@ def test_run_backtest(
     mock_importlib_import_module.return_value = mock_module
 
     # 3. Mock for vbt.Portfolio.from_signals()
+    # The lines for spec_entries, spec_exits, spec_close_data, and spec_portfolio are removed.
+
     mock_portfolio_object = MagicMock(name="MockPortfolioObject")
     mock_portfolio_object.sharpe_ratio.return_value = 1.5
 
