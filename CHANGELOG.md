@@ -98,6 +98,12 @@
 ### Fixed
 - Fixed potential thread/resource leaks when shutting down the LiveRunner.
 
+## [0.9.1] – 2025-05-11
+### Added
+- Transaction-rollback fixtures and high-coverage edge-case tests for DBWriter.
+### Changed
+- CI coverage threshold raised to 85 %.
+
 ## [Unreleased] - YYYY-MM-DD
 
 ### Fixed
@@ -109,6 +115,7 @@
 - Fixed hanging tests and assertion errors in `tests/live/adapters/test_mock.py` by:
     - Correcting assertions for `MockBrokerAdapter` methods (`get_cash`, `get_positions`) to match actual return types (dict for cash, List[Position] for positions).
     - Updating `test_mock_adapter_cancel_order` to assert boolean return from `cancel_order`.
+- Enhanced `get_engine()` to automatically create parent directories for SQLite database files, preventing failures when ALGO_DB_URL points to a non-existent directory.
 
 ### Changed
 - Migrated Pydantic from V1 to V2:

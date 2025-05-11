@@ -3,6 +3,8 @@ from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 import datetime
 from sqlalchemy.sql import text
+import tempfile
+from pathlib import Path
 
 from algo_mvp.db.models import Order, Fill, Equity, Log
 from algo_mvp.db import get_engine  # Assuming SessionLocal might be used or tested
@@ -24,6 +26,27 @@ def test_get_engine_custom_url():
     custom_url = "sqlite:///:memory:custom"
     engine = get_engine(url=custom_url)
     assert str(engine.url) == custom_url
+
+
+def test_get_engine_creates_directory():
+    """Test get_engine creates parent directory for SQLite file URLs."""
+    # Create a temporary directory
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Construct a path to a non-existent nested directory
+        nested_dir = Path(temp_dir) / "non" / "existent" / "directory"
+        db_path = nested_dir / "test.db"
+
+        # Create a SQLite URL with the path
+        url = f"sqlite:///{db_path}"
+
+        # Call get_engine which should create the directory
+        engine = get_engine(url=url)
+
+        # Check the parent directory exists
+        assert nested_dir.exists(), "Parent directory was not created"
+
+        # Cleanup by disposing the engine
+        engine.dispose()
 
 
 # Test migrations and table creation (using the migrated_memory_engine fixture from conftest)

@@ -40,7 +40,9 @@ class DBWriter:
             self._worker_thread.start()
             logger.info("DBWriter initialized with engine %s", self.engine.url)
         else:
-            logger.info("DBWriter initialized in mock mode (no worker thread)")
+            # Create a shared session for mock mode for better efficiency
+            self._mock_session = Session(self.engine)
+            logger.info("DBWriter initialized in mock mode with shared session")
 
     def log_order(self, order):
         """Enqueue an order for database insertion.
@@ -64,17 +66,14 @@ class DBWriter:
             "created_at": order.created_at,
         }
 
-        # If in mock mode, process immediately with a new session
+        # If in mock mode, process immediately with the shared session
         if self._mock_mode:
-            with Session(self.engine) as session:
-                try:
-                    self._process_order(session, order_data)
-                    session.commit()
-                except Exception as e:
-                    session.rollback()
-                    logger.error(
-                        f"Error processing order in mock mode: {e}", exc_info=True
-                    )
+            try:
+                self._process_order(self._mock_session, order_data)
+                self._mock_session.commit()
+            except Exception as e:
+                self._mock_session.rollback()
+                logger.error(f"Error processing order in mock mode: {e}", exc_info=True)
             return
 
         self.queue.put(("order", order_data))
@@ -97,17 +96,14 @@ class DBWriter:
             "filled_at": fill.timestamp,
         }
 
-        # If in mock mode, process immediately with a new session
+        # If in mock mode, process immediately with the shared session
         if self._mock_mode:
-            with Session(self.engine) as session:
-                try:
-                    self._process_fill(session, fill_data)
-                    session.commit()
-                except Exception as e:
-                    session.rollback()
-                    logger.error(
-                        f"Error processing fill in mock mode: {e}", exc_info=True
-                    )
+            try:
+                self._process_fill(self._mock_session, fill_data)
+                self._mock_session.commit()
+            except Exception as e:
+                self._mock_session.rollback()
+                logger.error(f"Error processing fill in mock mode: {e}", exc_info=True)
             return
 
         self.queue.put(("fill", fill_data))
@@ -125,17 +121,16 @@ class DBWriter:
 
         equity_data = {"timestamp": timestamp, "equity": equity}
 
-        # If in mock mode, process immediately with a new session
+        # If in mock mode, process immediately with the shared session
         if self._mock_mode:
-            with Session(self.engine) as session:
-                try:
-                    self._process_equity(session, equity_data)
-                    session.commit()
-                except Exception as e:
-                    session.rollback()
-                    logger.error(
-                        f"Error processing equity in mock mode: {e}", exc_info=True
-                    )
+            try:
+                self._process_equity(self._mock_session, equity_data)
+                self._mock_session.commit()
+            except Exception as e:
+                self._mock_session.rollback()
+                logger.error(
+                    f"Error processing equity in mock mode: {e}", exc_info=True
+                )
             return
 
         self.queue.put(("equity", equity_data))
@@ -153,17 +148,14 @@ class DBWriter:
 
         log_data = {"level": level, "message": msg, "created_at": datetime.utcnow()}
 
-        # If in mock mode, process immediately with a new session
+        # If in mock mode, process immediately with the shared session
         if self._mock_mode:
-            with Session(self.engine) as session:
-                try:
-                    self._process_log(session, log_data)
-                    session.commit()
-                except Exception as e:
-                    session.rollback()
-                    logger.error(
-                        f"Error processing log in mock mode: {e}", exc_info=True
-                    )
+            try:
+                self._process_log(self._mock_session, log_data)
+                self._mock_session.commit()
+            except Exception as e:
+                self._mock_session.rollback()
+                logger.error(f"Error processing log in mock mode: {e}", exc_info=True)
             return
 
         self.queue.put(("log", log_data))
@@ -181,9 +173,13 @@ class DBWriter:
         logger.info("Closing DBWriter - waiting for queue to drain")
         self._closed = True
 
-        # Skip worker thread cleanup in mock mode
+        # In mock mode, just close the shared session
         if self._mock_mode:
-            logger.info("Mock mode - no worker thread to close")
+            logger.info("Mock mode - closing shared session")
+            if hasattr(self, "_mock_session"):
+                self._mock_session.close()
+                logger.info("Mock session closed")
+
             # Clean up the engine
             if self.engine:
                 self.engine.dispose()
