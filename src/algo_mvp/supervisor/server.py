@@ -578,3 +578,136 @@ async def shutdown_server(
     return {
         "message": "Shutdown initiated. Orchestrator stopping. Uvicorn server will exit if configured."
     }
+
+
+@app.post("/action/flatten_all")
+async def flatten_all(token: Optional[str] = Query(None)):
+    """
+    Close all open positions across all running LiveRunners.
+
+    Args:
+        token: Required token for authentication
+
+    Returns:
+        dict: Message confirming all positions are being flattened
+
+    Status Codes:
+        200: Action initiated successfully
+        401: Token required but not provided
+        403: Invalid token provided
+        500: Error executing the action
+    """
+    supervisor = get_supervisor()
+
+    # Token validation
+    if supervisor.config.shutdown_token:  # Using the same token as shutdown endpoint
+        if not token:
+            logger.warning(
+                "/action/flatten_all: Attempted access without token when token is required."
+            )
+            raise HTTPException(
+                status_code=401, detail="Authentication token required."
+            )
+        if token != supervisor.config.shutdown_token:
+            logger.warning("/action/flatten_all: Invalid token received")
+            raise HTTPException(status_code=403, detail="Invalid authentication token.")
+
+    logger.info("/action/flatten_all endpoint called. Closing all positions.")
+
+    try:
+        # Get the orchestrator and iterate over its runners
+        if not supervisor.orchestrator:
+            raise HTTPException(status_code=500, detail="Orchestrator not initialized.")
+
+        runners_closed = 0
+        for runner_name, runner in supervisor.orchestrator.runners.items():
+            if hasattr(runner, "adapter") and hasattr(
+                runner.adapter, "close_all_positions"
+            ):
+                logger.info(f"Closing all positions for runner: {runner_name}")
+                runner.adapter.close_all_positions()
+                runners_closed += 1
+            else:
+                logger.warning(
+                    f"Runner {runner_name} does not support close_all_positions()"
+                )
+
+        return {
+            "message": f"Flatten all initiated. Closing positions for {runners_closed} runner(s)."
+        }
+    except Exception as e:
+        logger.error(f"Error during flatten_all: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail=f"Error flattening positions: {str(e)}"
+        )
+
+
+@app.post("/action/pause")
+async def pause_runner(
+    runner: str = Query(..., description="The name of the runner to pause/resume"),
+    token: Optional[str] = Query(None, description="Authentication token"),
+):
+    """
+    Toggle a runner between active and paused state. When paused, new orders are suppressed.
+
+    Args:
+        runner: The name of the runner to toggle
+        token: Required token for authentication
+
+    Returns:
+        dict: Current paused state of the runner
+
+    Status Codes:
+        200: Action completed successfully
+        401: Token required but not provided
+        403: Invalid token provided
+        404: Runner not found
+        500: Error executing the action
+    """
+    supervisor = get_supervisor()
+
+    # Token validation
+    if supervisor.config.shutdown_token:
+        if not token:
+            logger.warning(
+                "/action/pause: Attempted access without token when token is required."
+            )
+            raise HTTPException(
+                status_code=401, detail="Authentication token required."
+            )
+        if token != supervisor.config.shutdown_token:
+            logger.warning("/action/pause: Invalid token received")
+            raise HTTPException(status_code=403, detail="Invalid authentication token.")
+
+    logger.info(f"/action/pause endpoint called for runner: {runner}")
+
+    try:
+        # Get the orchestrator and the specified runner
+        if not supervisor.orchestrator:
+            raise HTTPException(status_code=500, detail="Orchestrator not initialized.")
+
+        if runner not in supervisor.orchestrator.runners:
+            raise HTTPException(status_code=404, detail=f"Runner '{runner}' not found.")
+
+        target_runner = supervisor.orchestrator.runners[runner]
+
+        # Toggle the paused state
+        if not hasattr(target_runner, "paused"):
+            target_runner.paused = False  # Initialize if not set
+
+        target_runner.paused = not target_runner.paused
+
+        current_state = "paused" if target_runner.paused else "active"
+        logger.info(f"Runner '{runner}' is now {current_state}")
+
+        return {"paused": target_runner.paused}
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error toggling pause state for runner {runner}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Error changing runner state: {str(e)}"
+        )

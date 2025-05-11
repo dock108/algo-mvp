@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import os
+import requests
 
 from algo_mvp.analytics.api import AnalyticsAPI
 
@@ -197,6 +198,15 @@ def main(auto_refresh=True):
     if "theme" not in st.session_state:
         st.session_state["theme"] = "dark"  # Default theme
 
+    # Get supervisor URL from environment or secrets
+    supervisor_url = os.environ.get("SUPERVISOR_URL", None)
+    if not supervisor_url and hasattr(st, "secrets") and "supervisor_url" in st.secrets:
+        supervisor_url = st.secrets["supervisor_url"]
+
+    # Default for local development if not specified
+    if not supervisor_url:
+        supervisor_url = "http://localhost:8000"
+
     # Configure the Streamlit page
     st.set_page_config(page_title="Algo-MVP", layout="wide")
 
@@ -327,6 +337,58 @@ def main(auto_refresh=True):
         if st.button(refresh_label):
             st.session_state["auto_refresh"] = not st.session_state["auto_refresh"]
             st.rerun()
+
+        # Admin Controls section in an expander
+        with st.expander("🔐 Admin Controls"):
+            st.caption(
+                "These controls require authentication and directly affect live strategies."
+            )
+
+            # Token input field
+            token = st.text_input("Token", type="password", key="ctrl_token")
+
+            # Flatten All button with API call
+            if st.button("🛑 Flatten All"):
+                if token:
+                    try:
+                        r = requests.post(
+                            f"{supervisor_url}/action/flatten_all",
+                            params={"token": token},
+                        )
+                        if r.ok:
+                            st.success("All positions flattened")
+                        else:
+                            st.error(f"Error: {r.text}")
+                    except Exception as e:
+                        st.error(f"Connection error: {str(e)}")
+                else:
+                    st.warning("Please enter a token")
+
+            # Strategy selection and Pause button
+            # For now hardcoding "mes_scalp" as the example, but could be made dynamic
+            strategy_name = "mes_scalp"
+
+            if st.button(f"⏸ Pause Strategy ({strategy_name})"):
+                if token:
+                    try:
+                        r = requests.post(
+                            f"{supervisor_url}/action/pause",
+                            params={"runner": strategy_name, "token": token},
+                        )
+                        if r.ok:
+                            response_data = r.json()
+                            state = (
+                                "Paused"
+                                if response_data.get("paused", False)
+                                else "Active"
+                            )
+                            st.info(f"{strategy_name} is now {state}")
+                        else:
+                            st.error(f"Error: {r.text}")
+                    except Exception as e:
+                        st.error(f"Connection error: {str(e)}")
+                else:
+                    st.warning("Please enter a token")
 
     # Page header
     st.title("Algo-MVP – Live Overview")

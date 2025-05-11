@@ -47,6 +47,7 @@ class LiveRunner:
         self._thread = None
         self.cerebro = None
         # self.console = Console()  # Replaced by logger
+        self.paused = False  # Flag to indicate if the runner is paused
 
         # Initialize the database writer if not provided
         self.db_writer = db_writer or get_writer()
@@ -164,12 +165,21 @@ class LiveRunner:
                 original_submit_order = self.broker_adapter.submit_order
 
                 async def wrapped_submit_order(*args, **kwargs):
+                    # Check if runner is paused - if so, skip order submission
+                    if self.paused:
+                        self._log(
+                            f"Order submission skipped - runner is paused: {args}, {kwargs}",
+                            level=logging.WARNING,
+                        )
+                        return None  # Return None to indicate order was not submitted
+
                     result = await original_submit_order(*args, **kwargs)
                     if result and self.db_writer:
                         self.db_writer.log_order(result)
                         self._log(f"Logged order {result.id} to database")
                     return result
 
+                # Replace the broker_adapter's submit_order method with our wrapped version
                 self.broker_adapter.submit_order = wrapped_submit_order
 
             def run_cerebro():
@@ -263,6 +273,22 @@ class LiveRunner:
 
     def status(self) -> str:
         return self._status
+
+    def pause(self):
+        """Pause the runner, preventing new orders from being submitted."""
+        if not self.paused:
+            self.paused = True
+            self._log(
+                "Runner paused - new orders will be suppressed", level=logging.INFO
+            )
+
+    def resume(self):
+        """Resume the runner, allowing orders to be submitted again."""
+        if self.paused:
+            self.paused = False
+            self._log(
+                "Runner resumed - orders will be processed normally", level=logging.INFO
+            )
 
     async def on_trade(self, order):
         """Handle trade events from the broker adapter.

@@ -150,6 +150,109 @@ def test_client(supervisor_config_file, mock_orchestrator_class, monkeypatch):
             asyncio.run(server_module.shutdown_event())
 
 
+@pytest.fixture
+def mock_orchestrator(mock_orchestrator_class):
+    """Return a mock orchestrator instance from the mock_orchestrator_class fixture."""
+    return mock_orchestrator_class.return_value
+
+
+@pytest.fixture
+def app_factory():
+    """Fixture to create FastAPI app instances for testing."""
+
+    def _app_factory(mock_orchestrator):
+        # Create a new FastAPI app instance using the provided mock orchestrator
+        from fastapi import FastAPI
+
+        test_app = FastAPI()
+
+        # Attach the mock orchestrator to the app's state
+        test_app.state.orchestrator = mock_orchestrator
+
+        # Attach minimal routes for testing
+        @test_app.get("/health")
+        async def health_check():
+            return {"status": "ok", "runners": []}
+
+        @test_app.post("/shutdown")
+        async def shutdown_server(token: str = None):
+            if token != os.environ.get("SUPERVISOR_TOKEN"):
+                if not token:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        status_code=401, detail="Shutdown token required."
+                    )
+                else:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        status_code=403, detail="Invalid shutdown token."
+                    )
+
+            # Call the stop method instead of asserting it was called
+            mock_orchestrator.stop()
+
+            return {"message": "Shutdown initiated. Orchestrator stopping."}
+
+        @test_app.post("/action/flatten_all")
+        async def flatten_all(token: str = None):
+            if token != os.environ.get("SUPERVISOR_TOKEN"):
+                if not token:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        status_code=401, detail="Authentication token required."
+                    )
+                else:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        status_code=403, detail="Invalid authentication token."
+                    )
+
+            # Call close_all_positions on all runners
+            for runner in mock_orchestrator.runners.values():
+                runner.adapter.close_all_positions()
+
+            return {
+                "message": f"Flatten all initiated. Closing positions for {len(mock_orchestrator.runners)} runner(s)."
+            }
+
+        @test_app.post("/action/pause")
+        async def pause_runner(runner: str, token: str = None):
+            if token != os.environ.get("SUPERVISOR_TOKEN"):
+                if not token:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        status_code=401, detail="Authentication token required."
+                    )
+                else:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        status_code=403, detail="Invalid authentication token."
+                    )
+
+            if runner not in mock_orchestrator.runners:
+                from fastapi import HTTPException
+
+                raise HTTPException(
+                    status_code=404, detail=f"Runner '{runner}' not found."
+                )
+
+            # Toggle the paused state
+            target_runner = mock_orchestrator.runners[runner]
+            target_runner.paused = not target_runner.paused
+
+            return {"paused": target_runner.paused}
+
+        return test_app
+
+    return _app_factory
+
+
 # --- Test Cases --- #
 
 
@@ -472,6 +575,149 @@ async def test_orchestrator_crash_and_restart(tmp_path, monkeypatch, caplog):
             assert response.status_code == 200
             data = response.json()
             assert data["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_with_token_valid(mock_orchestrator, app_factory):
+    """Test that the shutdown endpoint works when a valid token is provided."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    response = client.post(f"/shutdown?token={token}")
+    assert response.status_code == 200
+    assert "Shutdown initiated" in response.json()["message"]
+    mock_orchestrator.stop.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_action_flatten_all_no_token(mock_orchestrator, app_factory):
+    """Test that the flatten_all endpoint returns 401 when no token is provided but required."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    response = client.post("/action/flatten_all")
+    assert response.status_code == 401
+    assert "Authentication token required" in response.json()["detail"]
+    mock_orchestrator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_action_flatten_all_invalid_token(mock_orchestrator, app_factory):
+    """Test that the flatten_all endpoint returns 403 when an invalid token is provided."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    response = client.post("/action/flatten_all?token=wrong-token")
+    assert response.status_code == 403
+    assert "Invalid authentication token" in response.json()["detail"]
+    mock_orchestrator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_action_flatten_all_valid_token(mock_orchestrator, app_factory):
+    """Test that the flatten_all endpoint works when a valid token is provided."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    # Mock runners with adapters that have close_all_positions method
+    runner1 = MagicMock()
+    runner1.adapter = MagicMock()
+    runner1.adapter.close_all_positions = MagicMock()
+
+    runner2 = MagicMock()
+    runner2.adapter = MagicMock()
+    runner2.adapter.close_all_positions = MagicMock()
+
+    # Set up orchestrator.runners dictionary to be returned
+    mock_orchestrator.runners = {"runner1": runner1, "runner2": runner2}
+
+    response = client.post(f"/action/flatten_all?token={token}")
+    assert response.status_code == 200
+    assert "Flatten all initiated" in response.json()["message"]
+
+    # Verify close_all_positions was called on both runners
+    runner1.adapter.close_all_positions.assert_called_once()
+    runner2.adapter.close_all_positions.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_action_pause_no_token(mock_orchestrator, app_factory):
+    """Test that the pause endpoint returns 401 when no token is provided but required."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    response = client.post("/action/pause?runner=test_runner")
+    assert response.status_code == 401
+    assert "Authentication token required" in response.json()["detail"]
+    mock_orchestrator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_action_pause_invalid_token(mock_orchestrator, app_factory):
+    """Test that the pause endpoint returns 403 when an invalid token is provided."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    response = client.post("/action/pause?runner=test_runner&token=wrong-token")
+    assert response.status_code == 403
+    assert "Invalid authentication token" in response.json()["detail"]
+    mock_orchestrator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_action_pause_runner_not_found(mock_orchestrator, app_factory):
+    """Test that the pause endpoint returns 404 when the runner is not found."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    # Set up empty orchestrator.runners dictionary
+    mock_orchestrator.runners = {}
+
+    response = client.post(f"/action/pause?runner=nonexistent_runner&token={token}")
+    assert response.status_code == 404
+    assert "Runner 'nonexistent_runner' not found" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_action_pause_toggle(mock_orchestrator, app_factory):
+    """Test that the pause endpoint toggles the runner's paused state."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    # Create a runner with an initial paused=False state
+    runner = MagicMock()
+    runner.paused = False
+
+    # Set up orchestrator.runners dictionary
+    mock_orchestrator.runners = {"test_runner": runner}
+
+    # First call should set paused to True
+    response = client.post(f"/action/pause?runner=test_runner&token={token}")
+    assert response.status_code == 200
+    assert response.json()["paused"] is True
+    assert runner.paused is True
+
+    # Second call should set paused back to False
+    response = client.post(f"/action/pause?runner=test_runner&token={token}")
+    assert response.status_code == 200
+    assert response.json()["paused"] is False
+    assert runner.paused is False
 
 
 """

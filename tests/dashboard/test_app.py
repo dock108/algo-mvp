@@ -3,6 +3,8 @@
 from unittest.mock import patch, MagicMock
 import pandas as pd
 import pytest
+import streamlit as st
+from unittest.mock import Mock
 
 from algo_mvp.dashboard import app
 
@@ -151,3 +153,118 @@ def test_trade_table_rows(mock_analytics_api):
 
         # Verify the tail(20) was called on the trades dataframe
         mock_trades_df.tail.assert_called_once_with(20)
+
+
+@patch("streamlit.rerun")
+@patch("streamlit.button")
+def test_refresh_button_toggles_auto_refresh(mock_button, mock_rerun):
+    """Test that the refresh button toggles auto refresh and triggers a rerun."""
+    # Setup
+    st.session_state.auto_refresh = True
+    mock_button.return_value = True  # Simulate button click
+
+    # Run
+    app.main(auto_refresh=False)  # Auto refresh disabled for test
+
+    # Verify
+    assert st.session_state.auto_refresh is False
+    mock_rerun.assert_called_once()
+
+
+@patch("requests.post")
+@patch("streamlit.button")
+@patch("streamlit.text_input")
+@patch("streamlit.expander")
+def test_flatten_all_button_with_token(
+    mock_expander, mock_text_input, mock_button, mock_post
+):
+    """Test that the flatten all button makes the correct API call when token is provided."""
+    # Setup
+    mock_expander.return_value.__enter__.return_value = None  # Mock the context manager
+    mock_text_input.return_value = "test-token"  # Simulate token input
+
+    # Simulate button clicks - only the flatten all button is clicked
+    def button_side_effect(label):
+        return label == "🛑 Flatten All"
+
+    mock_button.side_effect = button_side_effect
+
+    # Simulate successful API response
+    mock_post_response = Mock()
+    mock_post_response.ok = True
+    mock_post.return_value = mock_post_response
+
+    # Run
+    app.main(auto_refresh=False)  # Auto refresh disabled for test
+
+    # Verify
+    mock_post.assert_called_once()
+    # Check that the URL and parameters are correct
+    args, kwargs = mock_post.call_args
+    assert args[0].endswith("/action/flatten_all")
+    assert kwargs["params"]["token"] == "test-token"
+
+
+@patch("requests.post")
+@patch("streamlit.button")
+@patch("streamlit.text_input")
+@patch("streamlit.expander")
+def test_pause_button_with_token(
+    mock_expander, mock_text_input, mock_button, mock_post
+):
+    """Test that the pause button makes the correct API call when token is provided."""
+    # Setup
+    mock_expander.return_value.__enter__.return_value = None  # Mock the context manager
+    mock_text_input.return_value = "test-token"  # Simulate token input
+
+    # Simulate button clicks - only the pause button is clicked
+    def button_side_effect(label):
+        return "⏸ Pause Strategy" in label
+
+    mock_button.side_effect = button_side_effect
+
+    # Simulate successful API response
+    mock_post_response = Mock()
+    mock_post_response.ok = True
+    mock_post_response.json.return_value = {"paused": True}
+    mock_post.return_value = mock_post_response
+
+    # Run
+    app.main(auto_refresh=False)  # Auto refresh disabled for test
+
+    # Verify
+    mock_post.assert_called_once()
+    # Check that the URL and parameters are correct
+    args, kwargs = mock_post.call_args
+    assert args[0].endswith("/action/pause")
+    assert kwargs["params"]["token"] == "test-token"
+    assert (
+        kwargs["params"]["runner"] == "mes_scalp"
+    )  # This is the hardcoded value in the app
+
+
+@patch("requests.post")
+@patch("streamlit.button")
+@patch("streamlit.text_input")
+@patch("streamlit.expander")
+def test_control_buttons_no_token_warning(
+    mock_expander, mock_text_input, mock_button, mock_post
+):
+    """Test that a warning is displayed when trying to use control buttons without a token."""
+    # Setup
+    mock_expander.return_value.__enter__.return_value = None  # Mock the context manager
+    mock_text_input.return_value = ""  # No token provided
+
+    # Simulate button clicks - both buttons are clicked
+    mock_button.return_value = True
+
+    # Mock streamlit's warning function
+    with patch("streamlit.warning") as mock_warning:
+        # Run
+        app.main(auto_refresh=False)  # Auto refresh disabled for test
+
+        # Verify warning was shown for missing token
+        mock_warning.assert_called_with("Please enter a token")
+
+        # Verify no API call was made
+        mock_post.assert_not_called()

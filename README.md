@@ -215,8 +215,30 @@ The dashboard will be available at http://localhost:8501 by default and features
 - Responsive layout that adapts to mobile screens (down to 390px width)
 - Manual refresh control to pause/resume the 5-second auto-refresh
 - Styled metric cards and tables
+- Admin controls for emergency actions (token-protected)
 
 ![Dashboard Screenshot](assets/dashboard_dark.png)
+
+### Admin Controls
+
+The dashboard includes protected admin controls for emergency intervention:
+
+- **Flatten All**: Immediately closes all open positions across all running strategies
+- **Pause Strategy**: Toggles a runner between active and paused states (prevents new orders while paused)
+
+These controls are secured with a token-based authentication system:
+
+1. The controls appear in an expandable "Admin Controls" section in the sidebar
+2. You must enter the same token that's set in the `SUPERVISOR_TOKEN` environment variable
+3. Actions are executed via HTTP POST requests to the Supervisor API endpoints
+
+**Configuration**:
+1. Set the `SUPERVISOR_TOKEN` environment variable for your Supervisor instance
+2. Configure the Supervisor URL in the dashboard by either:
+   - Setting the `SUPERVISOR_URL` environment variable
+   - Adding `supervisor_url = "http://your-supervisor-host:port"` to `.streamlit/secrets.toml`
+
+If no configuration is provided, the dashboard will attempt to connect to `http://localhost:8000` by default.
 
 ## Supervisor & Health Check
 
@@ -288,6 +310,36 @@ The CLI will print the health endpoint URL and instructions for the shutdown tok
   - **Curl Example (replace `<YOUR_TOKEN>`):**
     ```bash
     curl -X POST "http://localhost:8000/shutdown?token=<YOUR_TOKEN>"
+    ```
+
+- **`POST /action/flatten_all?token=<TOKEN>`**
+  - Closes all open positions across all running LiveRunners.
+  - Requires a valid `token` query parameter matching the `SUPERVISOR_TOKEN` environment variable.
+  - Response (200 OK):
+    ```json
+    {
+      "message": "Flatten all initiated. Closing positions for 2 runner(s)."
+    }
+    ```
+  - **Curl Example (replace `<YOUR_TOKEN>`):**
+    ```bash
+    curl -X POST "http://localhost:8000/action/flatten_all?token=<YOUR_TOKEN>"
+    ```
+
+- **`POST /action/pause?runner=<RUNNER_NAME>&token=<TOKEN>`**
+  - Toggles a runner between active and paused states. When paused, new orders are suppressed.
+  - Parameters:
+    - `runner`: Name of the runner to toggle (required)
+    - `token`: Supervisor authentication token (required)
+  - Response (200 OK):
+    ```json
+    {
+      "paused": true  // true if paused, false if active
+    }
+    ```
+  - **Curl Example (replace `<RUNNER_NAME>` and `<YOUR_TOKEN>`):**
+    ```bash
+    curl -X POST "http://localhost:8000/action/pause?runner=<RUNNER_NAME>&token=<YOUR_TOKEN>"
     ```
 
 ## Back-testing

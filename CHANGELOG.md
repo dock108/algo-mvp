@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] – 2025-05-11
+### Added
+- Flatten All and Pause Strategy controls in dashboard, secured via Supervisor token.
+- LiveRunner pause logic and Supervisor action endpoints.
+- Admin Controls section in dashboard sidebar with token-based security.
+- Documentation for API endpoints and configuration in README.
+
 ## [0.11.1] – 2025-05-11
 ### Added
 - Custom Streamlit theme, dark/light toggle, metric cards, responsive layout.

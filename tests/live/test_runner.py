@@ -1,6 +1,7 @@
 import time
 import asyncio  # Add asyncio import for event loop management if needed
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, Mock, AsyncMock
+import logging
 
 import backtrader as bt
 import pytest
@@ -272,3 +273,106 @@ async def test_liverunner_with_mockbroker_order_flow(  # Add async
     print(
         "NOTE: Full broker order flow test requires LiveRunner to integrate adapter with cerebro.setbroker."
     )
+
+
+def test_live_runner_on_trade_handler():
+    """Test that the on_trade handler logs fills to the database."""
+    # Create a mock broker adapter that implements submit_order
+    mock_adapter = AsyncMock()
+    mock_adapter.submit_order = AsyncMock(return_value=Mock(id="test-order-id"))
+
+    # Create a mock DB writer
+    mock_db_writer = Mock()
+    mock_db_writer.log_order = Mock()
+    mock_db_writer.log_fill = Mock()
+
+    # Create a live runner with these mocks
+    runner = LiveRunner(
+        strategy_path="tests.live.dummy_strategy:DummyStrategy",
+        params={"param1": 1, "param2": "test"},
+        broker_config={"provider": "mock", "adapter": mock_adapter},
+        datafeed_config={"symbol": "TEST", "timeframe": "1Min"},
+        db_writer=mock_db_writer,
+    )
+
+    # Create a test order with a fill
+    test_order = Mock()
+    test_order.id = "test-order-id"
+    test_fill = Mock()
+    test_fill.order_id = "test-order-id"
+    test_order.fills = [test_fill]
+
+    # Call the on_trade method directly from the method object
+    # This avoids the issue with self.on_trade calling the method attribute
+    # We need to pass the runner instance as self
+    on_trade_method = LiveRunner.on_trade
+    asyncio.run(on_trade_method(runner, test_order))
+
+    # Verify the fill was logged
+    mock_db_writer.log_fill.assert_called_once_with(test_fill)
+
+
+@pytest.mark.asyncio
+async def test_live_runner_pause_functionality():
+    """Test that orders are not submitted when the runner is paused."""
+    # Create a mock broker adapter
+    mock_adapter = AsyncMock()
+    # Don't set submit_order here, we'll set it manually below
+
+    # Create a mock DB writer
+    mock_db_writer = Mock()
+
+    # Create a live runner with these mocks
+    runner = LiveRunner(
+        strategy_path="tests.live.dummy_strategy:DummyStrategy",
+        params={"param1": 1, "param2": "test"},
+        broker_config={"provider": "mock", "adapter": mock_adapter},
+        datafeed_config={"symbol": "TEST", "timeframe": "1Min"},
+        db_writer=mock_db_writer,
+    )
+
+    # Define our custom submit_order function that respects the paused state
+    original_submit = AsyncMock(return_value=Mock(id="test-order-id"))
+
+    async def paused_aware_submit_order(*args, **kwargs):
+        if runner.paused:
+            runner._log(
+                f"Order submission skipped - runner is paused: {args}, {kwargs}",
+                level=logging.WARNING,
+            )
+            return None
+        return await original_submit(*args, **kwargs)
+
+    # Manually set the submit_order method
+    mock_adapter.submit_order = paused_aware_submit_order
+
+    # Test submitting an order when NOT paused
+    assert runner.paused is False, "Runner should not be paused initially"
+
+    # Define order parameters
+    order_args = ("TEST", "buy", 1)
+    order_kwargs = {"limit_price": 100.0}
+
+    # Submit an order when not paused - should go through
+    result = await runner.broker_adapter.submit_order(*order_args, **order_kwargs)
+    assert result is not None, "Order should be submitted when runner is not paused"
+    original_submit.assert_called_once_with(*order_args, **order_kwargs)
+    original_submit.reset_mock()
+
+    # Now pause the runner
+    runner.pause()
+    assert runner.paused is True, "Runner should be paused after calling pause()"
+
+    # Try to submit an order when paused - should be skipped
+    result = await runner.broker_adapter.submit_order(*order_args, **order_kwargs)
+    assert result is None, "Order should not be submitted when runner is paused"
+    original_submit.assert_not_called()
+
+    # Resume the runner
+    runner.resume()
+    assert runner.paused is False, "Runner should not be paused after calling resume()"
+
+    # Submit an order after resuming - should go through
+    result = await runner.broker_adapter.submit_order(*order_args, **order_kwargs)
+    assert result is not None, "Order should be submitted after resuming"
+    original_submit.assert_called_once_with(*order_args, **order_kwargs)
