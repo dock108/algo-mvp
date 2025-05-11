@@ -190,9 +190,8 @@ def app_factory():
                         status_code=403, detail="Invalid shutdown token."
                     )
 
-            # Call the stop method instead of asserting it was called
+            # Call stop on the orchestrator
             mock_orchestrator.stop()
-
             return {"message": "Shutdown initiated. Orchestrator stopping."}
 
         @test_app.post("/action/flatten_all")
@@ -211,13 +210,14 @@ def app_factory():
                         status_code=403, detail="Invalid authentication token."
                     )
 
-            # Call close_all_positions on all runners
-            for runner in mock_orchestrator.runners.values():
-                runner.adapter.close_all_positions()
+            # Extract and call mock_orchestrator.flatten_all
+            for runner_name, runner in mock_orchestrator.runners.items():
+                if hasattr(runner, "adapter") and hasattr(
+                    runner.adapter, "close_all_positions"
+                ):
+                    runner.adapter.close_all_positions()
 
-            return {
-                "message": f"Flatten all initiated. Closing positions for {len(mock_orchestrator.runners)} runner(s)."
-            }
+            return {"message": "Flatten all initiated."}
 
         @test_app.post("/action/pause")
         async def pause_runner(runner: str, token: str = None):
@@ -242,11 +242,33 @@ def app_factory():
                     status_code=404, detail=f"Runner '{runner}' not found."
                 )
 
-            # Toggle the paused state
             target_runner = mock_orchestrator.runners[runner]
-            target_runner.paused = not target_runner.paused
 
+            if not hasattr(target_runner, "paused"):
+                target_runner.paused = False
+
+            target_runner.paused = not target_runner.paused
             return {"paused": target_runner.paused}
+
+        @test_app.post("/action/reload_config")
+        async def reload_config(token: str = None):
+            if token != os.environ.get("SUPERVISOR_TOKEN"):
+                if not token:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        status_code=401, detail="Authentication token required."
+                    )
+                else:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        status_code=403, detail="Invalid authentication token."
+                    )
+
+            # Call the reload method
+            result = mock_orchestrator.reload()
+            return {"reloaded": True, "runners": result}
 
         return test_app
 
@@ -694,30 +716,80 @@ async def test_action_pause_runner_not_found(mock_orchestrator, app_factory):
 
 @pytest.mark.asyncio
 async def test_action_pause_toggle(mock_orchestrator, app_factory):
-    """Test that the pause endpoint toggles the runner's paused state."""
+    """Test that the pause endpoint properly toggles the paused state."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+
+    # Create a mock runner
+    mock_runner = MagicMock()
+    mock_runner.paused = False
+
+    # Set up the orchestrator to return our mock runner
+    mock_orchestrator.runners = {"test_runner": mock_runner}
+
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    # Test toggling to paused
+    response = client.post(f"/action/pause?runner=test_runner&token={token}")
+    assert response.status_code == 200
+    assert response.json()["paused"] is True
+    assert mock_runner.paused is True
+
+    # Test toggling back to not paused
+    response = client.post(f"/action/pause?runner=test_runner&token={token}")
+    assert response.status_code == 200
+    assert response.json()["paused"] is False
+    assert mock_runner.paused is False
+
+
+@pytest.mark.asyncio
+async def test_action_reload_config_no_token(mock_orchestrator, app_factory):
+    """Test that the reload_config endpoint requires a token."""
     token = "test-token"
     os.environ["SUPERVISOR_TOKEN"] = token
     app = app_factory(mock_orchestrator)
     client = TestClient(app)
 
-    # Create a runner with an initial paused=False state
-    runner = MagicMock()
-    runner.paused = False
+    response = client.post("/action/reload_config")
+    assert response.status_code == 401
+    assert "required" in response.json()["detail"].lower()
+    mock_orchestrator.reload.assert_not_called()
 
-    # Set up orchestrator.runners dictionary
-    mock_orchestrator.runners = {"test_runner": runner}
 
-    # First call should set paused to True
-    response = client.post(f"/action/pause?runner=test_runner&token={token}")
+@pytest.mark.asyncio
+async def test_action_reload_config_invalid_token(mock_orchestrator, app_factory):
+    """Test that the reload_config endpoint validates the token."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    response = client.post("/action/reload_config?token=wrong-token")
+    assert response.status_code == 403
+    assert "invalid" in response.json()["detail"].lower()
+    mock_orchestrator.reload.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_action_reload_config_success(mock_orchestrator, app_factory):
+    """Test that the reload_config endpoint successfully calls the orchestrator's reload method."""
+    token = "test-token"
+    os.environ["SUPERVISOR_TOKEN"] = token
+
+    # Mock the reload method to return a status
+    mock_orchestrator.reload.return_value = {"runner1": "running", "runner2": "stopped"}
+
+    app = app_factory(mock_orchestrator)
+    client = TestClient(app)
+
+    response = client.post(f"/action/reload_config?token={token}")
     assert response.status_code == 200
-    assert response.json()["paused"] is True
-    assert runner.paused is True
-
-    # Second call should set paused back to False
-    response = client.post(f"/action/pause?runner=test_runner&token={token}")
-    assert response.status_code == 200
-    assert response.json()["paused"] is False
-    assert runner.paused is False
+    result = response.json()
+    assert result["reloaded"] is True
+    assert "runner1" in result["runners"]
+    assert "runner2" in result["runners"]
+    mock_orchestrator.reload.assert_called_once()
 
 
 """

@@ -546,6 +546,14 @@ async def shutdown_server(
         401: Token required but not provided
         403: Invalid token provided
     """
+    # TODO: Security improvement needed for production deployment
+    # Using query parameters for tokens is not secure as they appear in logs, browser history,
+    # and can be cached. For production, consider:
+    # 1. Using Authorization header: Authorization: Bearer <token>
+    # 2. Using POST JSON body: {"token": "your-token"}
+    # 3. Always use HTTPS in production
+    # This is fine for internal LAN deployments but should be updated for external exposure.
+
     supervisor = get_supervisor()
 
     # Token validation
@@ -597,6 +605,14 @@ async def flatten_all(token: Optional[str] = Query(None)):
         403: Invalid token provided
         500: Error executing the action
     """
+    # TODO: Security improvement needed for production deployment
+    # Using query parameters for tokens is not secure as they appear in logs, browser history,
+    # and can be cached. For production, consider:
+    # 1. Using Authorization header: Authorization: Bearer <token>
+    # 2. Using POST JSON body: {"token": "your-token"}
+    # 3. Always use HTTPS in production
+    # This is fine for internal LAN deployments but should be updated for external exposure.
+
     supervisor = get_supervisor()
 
     # Token validation
@@ -664,6 +680,14 @@ async def pause_runner(
         404: Runner not found
         500: Error executing the action
     """
+    # TODO: Security improvement needed for production deployment
+    # Using query parameters for tokens is not secure as they appear in logs, browser history,
+    # and can be cached. For production, consider:
+    # 1. Using Authorization header: Authorization: Bearer <token>
+    # 2. Using POST JSON body: {"token": "your-token"}
+    # 3. Always use HTTPS in production
+    # This is fine for internal LAN deployments but should be updated for external exposure.
+
     supervisor = get_supervisor()
 
     # Token validation
@@ -710,4 +734,68 @@ async def pause_runner(
         )
         raise HTTPException(
             status_code=500, detail=f"Error changing runner state: {str(e)}"
+        )
+
+
+@app.post("/action/reload_config")
+async def reload_config(
+    token: Optional[str] = Query(None, description="Authentication token"),
+):
+    """
+    Hot-reload the orchestrator configuration from the original YAML manifest.
+    This stops all existing runners and starts new ones based on the updated config.
+
+    Args:
+        token: Required token for authentication
+
+    Returns:
+        dict: Status of all runners after reload
+
+    Status Codes:
+        200: Configuration reloaded successfully
+        401: Token required but not provided
+        403: Invalid token provided
+        500: Error during reload
+    """
+    # TODO: Security improvement needed for production deployment
+    # Using query parameters for tokens is not secure as they appear in logs, browser history,
+    # and can be cached. For production, consider:
+    # 1. Using Authorization header: Authorization: Bearer <token>
+    # 2. Using POST JSON body: {"token": "your-token"}
+    # 3. Always use HTTPS in production
+    # This is fine for internal LAN deployments but should be updated for external exposure.
+
+    supervisor = get_supervisor()
+
+    # Token validation
+    if supervisor.config.shutdown_token:
+        if not token:
+            logger.warning(
+                "/action/reload_config: Attempted access without token when token is required."
+            )
+            raise HTTPException(
+                status_code=401, detail="Authentication token required."
+            )
+        if token != supervisor.config.shutdown_token:
+            logger.warning("/action/reload_config: Invalid token received")
+            raise HTTPException(status_code=403, detail="Invalid authentication token.")
+
+    logger.info("/action/reload_config endpoint called")
+
+    try:
+        # Get the orchestrator
+        if not supervisor.orchestrator:
+            raise HTTPException(status_code=500, detail="Orchestrator not initialized.")
+
+        # Get the manifest path that was used at boot time
+        manifest_path = supervisor.config.orchestrator_config
+
+        # Call the reload method
+        runner_status = supervisor.orchestrator.reload(str(manifest_path))
+
+        return {"reloaded": True, "runners": runner_status}
+    except Exception as e:
+        logger.error(f"Error reloading configuration: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail=f"Error reloading configuration: {str(e)}"
         )

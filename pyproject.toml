@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "algo-mvp"
-version = "0.12.0"
+version = "0.13.0"
 description = "Algorithmic trading framework MVP"
 authors = ["Dock108 <michael@dock108.io>"]
 readme = "README.md"

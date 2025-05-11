@@ -216,29 +216,44 @@ The dashboard will be available at http://localhost:8501 by default and features
 - Manual refresh control to pause/resume the 5-second auto-refresh
 - Styled metric cards and tables
 - Admin controls for emergency actions (token-protected)
+- Password-protected access
 
 ![Dashboard Screenshot](assets/dashboard_dark.png)
 
 ### Admin Controls
 
-The dashboard includes protected admin controls for emergency intervention:
+The dashboard includes protected admin controls for emergency actions and configuration changes:
 
-- **Flatten All**: Immediately closes all open positions across all running strategies
-- **Pause Strategy**: Toggles a runner between active and paused states (prevents new orders while paused)
+- **Flatten All** - Closes all open positions across all running strategies
+- **Pause Strategy** - Toggles a specific runner between active and paused state
+- **Reload Config** - Hot-reloads the orchestrator YAML config without restarting
 
-These controls are secured with a token-based authentication system:
+All admin actions require a valid supervisor token to execute.
 
-1. The controls appear in an expandable "Admin Controls" section in the sidebar
-2. You must enter the same token that's set in the `SUPERVISOR_TOKEN` environment variable
-3. Actions are executed via HTTP POST requests to the Supervisor API endpoints
+### Security
 
-**Configuration**:
-1. Set the `SUPERVISOR_TOKEN` environment variable for your Supervisor instance
-2. Configure the Supervisor URL in the dashboard by either:
-   - Setting the `SUPERVISOR_URL` environment variable
-   - Adding `supervisor_url = "http://your-supervisor-host:port"` to `.streamlit/secrets.toml`
+The dashboard and API endpoints include several security features:
 
-If no configuration is provided, the dashboard will attempt to connect to `http://localhost:8000` by default.
+1. **Password Protection**:
+   - The dashboard is protected by a password gate
+   - Set via environment variable: `DASHBOARD_PASSWORD=your-secure-password`
+   - Or in `.streamlit/secrets.toml`: `dashboard_password = "your-secure-password"`
+   - Default password is "password" if not configured
+
+2. **Supervisor Token**:
+   - All action endpoints (/action/flatten_all, /action/pause, /action/reload_config) are protected
+   - Set via environment variable: `SUPERVISOR_TOKEN=your-secure-token`
+   - Required for all sensitive operations
+
+3. **Config Hot-Reload**:
+   - The `/action/reload_config` endpoint allows updating runner configurations without downtime
+   - Example usage:
+     ```bash
+     curl -X POST "http://localhost:8000/action/reload_config?token=your-secure-token"
+     ```
+   - Returns status of all runners after reload
+
+For production deployments, always set strong passwords/tokens and consider using HTTPS.
 
 ## Supervisor & Health Check
 
@@ -352,73 +367,4 @@ Backtests are configured using YAML files. A sample configuration can be found i
 - `configs/sample_sweep.yaml`
 
 Key configuration options include:
-- `provider`: `alpaca` or `tradovate` (data source)
-- `symbol`: The ticker symbol to backtest
-- `timeframe`: Data granularity (e.g., `1Min`, `1Day`)
-- `strategy`: Strategy name (e.g., `vwap_atr`, `three_day_momo`)
-- `params`: Strategy parameters (scalar values for single runs, lists for grid sweeps)
-- `cash`: Initial cash amount
-- `commission`: Commission per trade
-- `metrics`: Performance metrics to calculate (e.g., `sharpe`, `max_drawdown`, `cagr`)
-
-### CLI Usage
-
-To run a backtest, use the following command:
-
-```bash
-poetry run python -m algo_mvp.backtest --config configs/sample_sweep.yaml
-```
-
-**Optional flags:**
-- `--output-dir`: Custom output directory for backtest results
-- `--verbose`: Enable verbose output for more details on the backtesting process
-
-### Strategies
-
-The following strategies are included:
-
-1. **VWAP-ATR** (`vwap_atr`): Uses Volume Weighted Average Price (VWAP) and Average True Range (ATR) to generate trading signals.
-   - Parameters:
-     - `band_mult`: Multiplier for ATR bands around VWAP
-     - `atr_len`: Period for ATR calculation
-
-2. **Three Day Momentum** (`three_day_momo`): Looks for strong directional moves over a three-day period and enters in the direction of the momentum with ATR-based stops.
-   - Parameters:
-     - `band_mult`: Multiplier for ATR stop bands
-     - `atr_len`: Period for ATR calculation
-
-### Backtest Results
-
-Backtest results are stored in the `backtests/` directory, organized by strategy, symbol, and timestamp. Each backtest run produces:
-- `metrics.csv`: Summary of performance metrics for all parameter combinations
-- `equity_{run_id}.csv`: Equity curve for each run
-- `plot_{run_id}.html`: Interactive vectorbt plot for each run
-- A copy of the configuration file used for the backtest
-
-## Analytics API
-
-The project includes a comprehensive Analytics API for analyzing trading performance from the SQLite database. The API provides easy-to-consume Pandas DataFrames and pre-calculated statistics that can be used in dashboards and reports.
-
-```python
-from algo_mvp.analytics import AnalyticsAPI
-
-# Create an API instance (uses default database connection)
-api = AnalyticsAPI()
-
-# Get equity curve resampled to 1-min frequency
-equity_df = api.pnl_curve(start='2025-05-01', end='2025-05-10')
-
-# Get detailed trade log with P&L per round-trip
-trades_df = api.trade_log(symbol='AAPL')  # Filter by symbol (optional)
-
-# Get performance statistics
-stats = api.summary_stats(period='MTD')  # Options: 'all', 'YTD', 'MTD', 'WTD', 'today'
-
-# Get drawdown series
-drawdowns = api.drawdown_series()
-
-# Get currently open positions
-positions = api.open_positions()
-```
-
-The Analytics API is designed to be the single source of truth for dashboard and reporting tools, eliminating the need for direct SQL queries.
+- `provider`: `alpaca` or `tradovate`

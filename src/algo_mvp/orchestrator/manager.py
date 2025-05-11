@@ -293,3 +293,41 @@ class Orchestrator:
                 final_statuses[runner_name] = "pending_or_failed_to_start"
 
         return final_statuses
+
+    def reload(self, manifest_path: str) -> Dict[str, str]:
+        """
+        Reload the orchestrator configuration from the given manifest path.
+
+        This method:
+        1. Stops all existing runners
+        2. Re-parses the YAML configuration
+        3. Starts new runners based on the updated configuration
+
+        Args:
+            manifest_path: Path to the orchestrator YAML manifest
+
+        Returns:
+            Dict[str, str]: Status of each runner after reloading
+        """
+        self.logger.info(f"Reloading orchestrator configuration from {manifest_path}")
+
+        # First, stop all existing runners
+        self.stop()
+
+        # Re-parse the YAML configuration
+        try:
+            with open(manifest_path, "r") as f:
+                config_data = yaml.safe_load(f)
+            self.config = OrchestratorConfig(**config_data)
+            self.logger.info(
+                f"Configuration reloaded successfully. Starting {len(self.config.runners)} runners."
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to reload configuration: {e}", exc_info=True)
+            raise
+
+        # Start the orchestrator with the new configuration
+        self.start()
+
+        # Return the status of all runners
+        return self.status()

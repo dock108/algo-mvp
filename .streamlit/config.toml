@@ -1,5 +1,5 @@
 [theme]
-base="dark"
+base="light"
 primaryColor  = "#14b8a6"   # teal-400
 secondaryBackgroundColor = "#1e293b"  # slate-800
 font = "sans serif"

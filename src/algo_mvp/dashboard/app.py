@@ -191,6 +191,31 @@ def main(auto_refresh=True):
         auto_refresh: Whether to automatically refresh the dashboard.
                      Set to False during testing.
     """
+    # Get password from environment variable or secrets
+    password = os.environ.get("DASHBOARD_PASSWORD", None)
+    if password is None:
+        try:
+            password = st.secrets.get("dashboard_password", "password")
+        except Exception:
+            password = "password"  # Default fallback
+
+    # Check authentication state
+    if "auth" not in st.session_state:
+        st.title("Dashboard Login")
+        pwd = st.text_input("Dashboard password", type="password")
+
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("Login"):
+                if pwd == password:
+                    st.session_state["auth"] = True
+                    st.rerun()
+                else:
+                    st.error("Incorrect password")
+
+        # Stop rendering the rest of the dashboard if not authenticated
+        st.stop()
+
     # Initialize session state for auto-refresh and theme if not already set
     if "auto_refresh" not in st.session_state:
         st.session_state["auto_refresh"] = auto_refresh
@@ -311,6 +336,11 @@ def main(auto_refresh=True):
     with st.sidebar:
         st.title("Settings")
 
+        # Logout button
+        if st.button("🔑 Logout"):
+            st.session_state.pop("auth", None)
+            st.rerun()
+
         # Theme toggle
         theme_label = "🌗 Dark / Light"
         if st.button(theme_label):
@@ -383,6 +413,34 @@ def main(auto_refresh=True):
                                 else "Active"
                             )
                             st.info(f"{strategy_name} is now {state}")
+                        else:
+                            st.error(f"Error: {r.text}")
+                    except Exception as e:
+                        st.error(f"Connection error: {str(e)}")
+                else:
+                    st.warning("Please enter a token")
+
+            # Add Reload Config button
+            if st.button("🔄 Reload Config"):
+                if token:
+                    try:
+                        r = requests.post(
+                            f"{supervisor_url}/action/reload_config",
+                            params={"token": token},
+                        )
+                        if r.ok:
+                            response_data = r.json()
+                            if response_data.get("reloaded", False):
+                                st.success("Configuration reloaded successfully")
+                                # Display runner status
+                                for runner_name, status in response_data.get(
+                                    "runners", {}
+                                ).items():
+                                    st.info(f"Runner '{runner_name}': {status}")
+                            else:
+                                st.warning(
+                                    "Reload operation completed but may not have been successful"
+                                )
                         else:
                             st.error(f"Error: {r.text}")
                     except Exception as e:
