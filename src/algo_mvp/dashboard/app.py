@@ -119,8 +119,8 @@ def metric_card(label, value, delta=None, icon=None):
         border-radius: 0.5rem;
         padding: 1rem;
         margin-bottom: 1rem;
-        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 0.0625rem 0.125rem 0 rgba(0, 0, 0, 0.05);
+        border: 0.0625rem solid rgba(255, 255, 255, 0.1);
     ">
         <div style="color: rgba(255, 255, 255, 0.6); font-size: 0.8rem; margin-bottom: 0.5rem;">
             {icon_html}{label}
@@ -147,31 +147,40 @@ def metric_card(label, value, delta=None, icon=None):
 
 def toggle_theme():
     """Toggle between light and dark theme."""
+    # Toggle the theme in session state
     if st.session_state.get("theme", "dark") == "dark":
-        st.session_state["theme"] = "light"
+        new_theme = "light"
     else:
-        st.session_state["theme"] = "dark"
+        new_theme = "dark"
 
-    # Update the config.toml file
+    st.session_state["theme"] = new_theme
+
+    # Update the config.toml file in the background
     config_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
         ".streamlit",
         "config.toml",
     )
 
-    with open(config_path, "r") as f:
-        config = f.read()
+    try:
+        with open(config_path, "r") as f:
+            config = f.read()
 
-    if st.session_state["theme"] == "light":
-        config = config.replace('base="dark"', 'base="light"')
-    else:
-        config = config.replace('base="light"', 'base="dark"')
+        if new_theme == "light":
+            config = config.replace('base="dark"', 'base="light"')
+        else:
+            config = config.replace('base="light"', 'base="dark"')
 
-    with open(config_path, "w") as f:
-        f.write(config)
+        with open(config_path, "w") as f:
+            f.write(config)
 
-    # Force a rerun to apply theme change
-    st.rerun()
+        # We'll try to use JavaScript for immediate theme toggle without reload
+        # but will keep the ability to rerun if needed
+        return new_theme
+    except Exception as e:
+        st.error(f"Failed to update theme: {e}")
+        # Force a rerun if modifying the config file directly failed
+        st.rerun()
 
 
 def main(auto_refresh=True):
@@ -191,6 +200,100 @@ def main(auto_refresh=True):
     # Configure the Streamlit page
     st.set_page_config(page_title="Algo-MVP", layout="wide")
 
+    # JavaScript to manage theme persistence with localStorage
+    js_code = """
+    <script>
+    // Function to set theme in localStorage
+    function setThemePreference(theme) {
+        localStorage.setItem('algo_mvp_theme', theme);
+    }
+
+    // Function to get theme from localStorage
+    function getThemePreference() {
+        return localStorage.getItem('algo_mvp_theme') || 'dark';
+    }
+
+    // Function to apply theme without full page reload
+    function applyTheme(theme) {
+        // This targets Streamlit's theme CSS variables
+        document.body.dataset.theme = theme;
+
+        // Toggle dark/light class on body for additional custom styling
+        if (theme === 'light') {
+            document.body.classList.remove('dark');
+            document.body.classList.add('light');
+        } else {
+            document.body.classList.remove('light');
+            document.body.classList.add('dark');
+        }
+
+        // Store the preference
+        setThemePreference(theme);
+    }
+
+    // Initialize theme from localStorage (will be called when page loads)
+    document.addEventListener('DOMContentLoaded', function() {
+        const savedTheme = getThemePreference();
+
+        // Apply the theme immediately
+        applyTheme(savedTheme);
+
+        // Create a custom event to communicate with Streamlit
+        const event = new CustomEvent('streamlit:themeInit', {
+            detail: { theme: savedTheme }
+        });
+        window.dispatchEvent(event);
+    });
+
+    // Listen for theme changes to save to localStorage
+    window.addEventListener('streamlit:themeChange', function(e) {
+        applyTheme(e.detail.theme);
+    });
+    </script>
+    """
+
+    # Inject the JavaScript
+    st.markdown(js_code, unsafe_allow_html=True)
+
+    # Read theme from localStorage via custom event listener
+    # We'll use a query param to get the initial theme without requiring a reload
+    query_params = st.experimental_get_query_params()
+    if "theme" in query_params and query_params["theme"][0] in ["light", "dark"]:
+        st.session_state["theme"] = query_params["theme"][0]
+
+        # Update the config.toml file to match localStorage preference
+        config_path = os.path.join(
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            ),
+            ".streamlit",
+            "config.toml",
+        )
+
+        with open(config_path, "r") as f:
+            config = f.read()
+
+        if st.session_state["theme"] == "light":
+            config = config.replace('base="dark"', 'base="light"')
+        else:
+            config = config.replace('base="light"', 'base="dark"')
+
+        with open(config_path, "w") as f:
+            f.write(config)
+
+    # Custom CSS for theme transitions
+    theme_transitions = """
+    <style>
+    /* Smooth theme transitions */
+    body {
+        transition: background-color 0.3s ease, color 0.3s ease;
+    }
+
+    /* Additional theme-specific styles can be added here */
+    </style>
+    """
+    st.markdown(theme_transitions, unsafe_allow_html=True)
+
     # Set pandas display options
     set_display_options()
 
@@ -201,7 +304,19 @@ def main(auto_refresh=True):
         # Theme toggle
         theme_label = "🌗 Dark / Light"
         if st.button(theme_label):
-            toggle_theme()
+            # Toggle theme and get the new theme
+            new_theme = toggle_theme()
+
+            # Dispatch a custom event to update localStorage (via st.markdown JavaScript)
+            js_update = f"""
+            <script>
+                // Notify our listener that theme changed
+                window.dispatchEvent(new CustomEvent('streamlit:themeChange', {{
+                    detail: {{ theme: '{new_theme}' }}
+                }}));
+            </script>
+            """
+            st.markdown(js_update, unsafe_allow_html=True)
 
         # Manual refresh button
         refresh_label = (
