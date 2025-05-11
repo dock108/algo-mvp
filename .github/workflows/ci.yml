@@ -26,6 +26,9 @@ jobs:
       uses: snok/install-poetry@v1
       with:
         version: 1.8.0 # Or latest
+    - name: Upgrade pip, setuptools, and wheel
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
     - name: Cache Poetry virtualenv
       uses: actions/cache@v4
       with:
