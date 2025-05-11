@@ -167,6 +167,78 @@ python -m algo_mvp.orchestrator --config configs/orchestrator_sample.yaml
 
 The CLI will display a live table with the status of each runner, refreshing periodically. Press `Ctrl+C` to gracefully shut down the orchestrator and all its runners.
 
+## Supervisor & Health Check
+
+A lightweight supervisor provides an HTTP interface for monitoring and controlling the Orchestrator.
+
+### Configuration
+
+The supervisor is configured using a YAML file. A sample configuration is provided in `configs/supervisor_sample.yaml`.
+
+**Example `configs/supervisor_sample.yaml`:**
+```yaml
+orchestrator_config: configs/orchestrator_sample.yaml
+host: 0.0.0.0
+port: 8000
+log_level: INFO
+```
+
+- `orchestrator_config`: Path to the Orchestrator's manifest YAML file.
+- `host`: Host address for the supervisor's HTTP server.
+- `port`: Port for the supervisor's HTTP server.
+- `log_level`: Log level for the supervisor.
+
+### CLI Usage
+
+To start the supervisor, use the following command:
+
+```bash
+python -m algo_mvp.cli.run_supervisor --config configs/supervisor_sample.yaml
+```
+
+The CLI will print the health endpoint URL and instructions for the shutdown token.
+
+### Environment Variables
+
+- `SUPERVISOR_TOKEN`: A shared secret token required for the `/shutdown` endpoint.
+
+### API Endpoints
+
+- **`GET /health`**
+  - Returns the health status of the Orchestrator and its runners.
+  - Response (200 OK if all runners healthy):
+    ```json
+    {
+      "status": "ok",
+      "runners": [
+        {"name": "runner1", "status": "RUNNING"},
+        {"name": "runner2", "status": "RUNNING"}
+      ]
+    }
+    ```
+  - Response (503 Service Unavailable if any runner is not healthy):
+    ```json
+    {
+      "status": "error",
+      "runners": [
+        {"name": "runner1", "status": "RUNNING"},
+        {"name": "runner2", "status": "CRASHED"}
+      ]
+    }
+    ```
+  - **Curl Example:**
+    ```bash
+    curl http://localhost:8000/health
+    ```
+
+- **`POST /shutdown?token=<TOKEN>`**
+  - Gracefully shuts down the Orchestrator and the supervisor process.
+  - Requires a valid `token` query parameter matching the `SUPERVISOR_TOKEN` environment variable.
+  - **Curl Example (replace `<YOUR_TOKEN>`):**
+    ```bash
+    curl -X POST "http://localhost:8000/shutdown?token=<YOUR_TOKEN>"
+    ```
+
 ## Back-testing
 
 This project includes a vectorbt-powered backtesting engine that can run single or grid parameter sweeps based on YAML configuration files.

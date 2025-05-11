@@ -139,3 +139,64 @@ class TestLiveConfig:
             assert live_config.runners == []
         except ValidationError as e:
             pytest.fail(f"LiveConfig should default 'runners' to [] if missing: {e}")
+
+    def test_live_config_empty(self):
+        """Test LiveConfig initialization with no runners."""
+        config = LiveConfig()
+        assert config.runners == []
+
+    def test_live_config_with_runners(self):
+        """Test LiveConfig initialization with multiple runners."""
+        runner1_data = {
+            "name": "runner1",
+            "provider": "mock_provider",
+            "strategy": "my_module.strategies:Strategy1",
+            "symbol": "AAPL",
+            "timeframe": "1D",
+        }
+        runner2_data = {
+            "name": "runner2",
+            "provider": "mock_provider",
+            "strategy": "my_module.strategies:Strategy2",
+            "symbol": "MSFT",
+            "timeframe": "1H",
+        }
+
+        config = LiveConfig(
+            runners=[RunnerConfig(**runner1_data), RunnerConfig(**runner2_data)]
+        )
+
+        assert len(config.runners) == 2
+        assert config.runners[0].name == "runner1"
+        assert config.runners[1].name == "runner2"
+
+    def test_live_config_add_runner(self):
+        """Test adding a runner to LiveConfig."""
+        config = LiveConfig()
+        runner_data = {
+            "name": "new_runner",
+            "provider": "mock_provider",
+            "strategy": "my_module.strategies:Strategy",
+            "symbol": "GOOG",
+            "timeframe": "5Min",
+        }
+
+        config.runners.append(RunnerConfig(**runner_data))
+
+        assert len(config.runners) == 1
+        assert config.runners[0].name == "new_runner"
+
+    def test_live_config_validation(self):
+        """Test LiveConfig validation with invalid runner data."""
+        runner_data = {
+            "name": "invalid_runner",
+            "provider": "mock_provider",
+            "strategy": "invalid_strategy_format",  # Invalid format
+            "symbol": "AAPL",
+            "timeframe": "1D",
+        }
+
+        with pytest.raises(ValidationError) as excinfo:
+            LiveConfig(runners=[RunnerConfig(**runner_data)])
+
+        assert "strategy must be in format module.path:ClassName" in str(excinfo.value)

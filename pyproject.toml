@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "algo-mvp"
-version = "0.7.0"
+version = "0.7.1"
 description = "MVP trading algorithm project"
 authors = ["Dock108 <michael@dock108.io>"]
 readme = "README.md"
@@ -29,6 +29,8 @@ aiohttp = "^3.9"
 nest_asyncio = "^1.6"
 alpaca-py = "^0.40.0"
 httpx = "^0.27"
+fastapi = "^0.111"
+uvicorn = {version = "^0.29", extras = ["standard"]}
 
 [tool.poetry.group.dev.dependencies]
 responses = "^0.25.7"

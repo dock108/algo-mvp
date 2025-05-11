@@ -139,3 +139,8 @@
 - Pydantic models for orchestrator configuration validation.
 - Unit tests for the orchestrator module with mocked LiveRunners, covering start, stop, status, and crash handling (restart true/false).
 - Sample orchestrator manifest `configs/orchestrator_sample.yaml`.
+
+## [0.7.1] – 2025-05-11
+### Added
+- FastAPI-based Supervisor with /health and /shutdown routes.
+- Env `SUPERVISOR_TOKEN` for shutdown auth.
