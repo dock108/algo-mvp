@@ -29,6 +29,10 @@ jobs:
     - name: Upgrade pip, setuptools, and wheel
       run: |
         python -m pip install --upgrade pip setuptools wheel
+        poetry run pip install --upgrade pip setuptools wheel
+    - name: Pre-install numpy 1.23.5 binary
+      run: |
+        poetry run pip install numpy==1.23.5 --only-binary=numpy
     - name: Cache Poetry virtualenv
       uses: actions/cache@v4
       with:
@@ -37,7 +41,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-poetry-
     - name: Install dependencies
-      run: poetry install --no-interaction
+      run: poetry install --no-interaction --no-build
     - name: Run tests with coverage
       run: |
         poetry run pytest --cov=src --cov-fail-under=85
