@@ -4,7 +4,8 @@ from algo_mvp.live.broker_adapter_base import BrokerAdapterBase
 
 
 class MockBrokerAdapter(BrokerAdapterBase):
-    def __init__(self):
+    def __init__(self, runner=None):
+        super().__init__(runner)
         self.cash = 100000.0
         self.positions = defaultdict(float)
         # self.call_counts = defaultdict(int) # Deprecated
@@ -21,13 +22,13 @@ class MockBrokerAdapter(BrokerAdapterBase):
         self._order_id_counter = 0  # To generate unique mock order IDs
         self._is_connected = False
 
-    def connect(self):
+    async def connect(self):
         """Connect to the mock broker API."""
         self.connect_calls += 1
         self._is_connected = True
         return True
 
-    def close(self):
+    async def close(self):
         """Close all connections to the mock broker."""
         self.close_calls += 1
         self._is_connected = False

@@ -153,7 +153,8 @@ async def connected_adapter(adapter, mock_http_client, mock_websocket_connect):
     mock_http_client.return_value.request.return_value.status_code = 200
 
     await adapter.connect()
-    return adapter
+    yield adapter
+    await adapter.close()  # Ensure cleanup happens
 
 
 @pytest.fixture
@@ -161,6 +162,7 @@ def mock_websocket_connect():
     with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
         mock_ws_instance = AsyncMock()
         mock_ws_instance.closed = False
+        # Only set initial connection messages, let tests set their own messages
         mock_ws_instance.recv.side_effect = ["o", 'a[{"userStatus":"Authorized"}]']
         mock_ws_instance.send = AsyncMock()
         mock_ws_instance.close = AsyncMock()
@@ -520,18 +522,26 @@ async def test_websocket_reconnects_on_token_expiry_during_heartbeat(
 
 @pytest.mark.asyncio
 async def test_websocket_handles_fill_event(connected_adapter, mock_live_runner):
-    adapter = connected_adapter  # Use the already connected adapter
+    adapter = connected_adapter
 
-    # The original _ws_listen_task from connected_adapter might have stopped due to StopIteration.
-    # We will cancel it if it's somehow still running and start a new one for this test.
+    # Stop any existing tasks
+    adapter._stop_event.set()
     if adapter.ws_listener_task and not adapter.ws_listener_task.done():
         adapter.ws_listener_task.cancel()
         try:
             await adapter.ws_listener_task
         except asyncio.CancelledError:
             pass
-    adapter.ws_listener_task = None  # Clear the old task reference
+    if adapter.heartbeat_task and not adapter.heartbeat_task.done():
+        adapter.heartbeat_task.cancel()
+        try:
+            await adapter.heartbeat_task
+        except asyncio.CancelledError:
+            pass
+    adapter.ws_listener_task = None
+    adapter.heartbeat_task = None
 
+    # Prepare the WebSocket message
     tradovate_fill_data = {
         "tradeId": "fill-12345",
         "orderId": "order-67890",
@@ -556,45 +566,42 @@ async def test_websocket_handles_fill_event(connected_adapter, mock_live_runner)
     ws_message = f'a[{{"e":"fill","d":{json.dumps(tradovate_fill_data)}}}]'
 
     if not adapter.ws_connection:
-        pytest.fail(
-            "connected_adapter did not establish ws_connection for test_websocket_handles_fill_event"
-        )
+        pytest.fail("connected_adapter did not establish ws_connection")
 
-    # Configure recv mock for this specific test run of _ws_listen
-    adapter.ws_connection.recv.side_effect = [
-        ws_message,
-        asyncio.CancelledError(),  # To stop the listener loop after processing our message
-    ]
+    # Set up the fill event tracking
+    fill_processed = asyncio.Event()
+    original_on_trade = mock_live_runner.on_trade
 
-    # Start a new listener task for this test
-    # Ensure _stop_event is clear so the new listener task can run
+    async def wrapped_on_trade(*args, **kwargs):
+        await original_on_trade(*args, **kwargs)
+        fill_processed.set()
+
+    mock_live_runner.on_trade = wrapped_on_trade
+
+    # Configure WebSocket mock with our test message
+    adapter.ws_connection.recv.side_effect = [ws_message, asyncio.CancelledError()]
+
+    # Start a new listener task
     adapter._stop_event.clear()
-    test_listener_task = asyncio.create_task(
-        adapter._ws_listen(), name="test_fill_listener"
-    )
-    adapter.ws_listener_task = test_listener_task  # So close() can find it if test fails before explicit cancel
+    test_listener_task = asyncio.create_task(adapter._ws_listen())
 
     try:
-        await asyncio.wait_for(test_listener_task, timeout=2)
+        # Wait for the fill to be processed
+        await asyncio.wait_for(fill_processed.wait(), timeout=2)
     except asyncio.TimeoutError:
-        test_file_logger.warning(
-            "Test listener task for fill event did not complete in time."
-        )
-    except asyncio.CancelledError:
-        test_file_logger.info(
-            "Test listener task for fill event was cancelled as expected."
-        )
+        pytest.fail("Fill event was not processed within timeout")
     finally:
-        if not test_listener_task.done():
+        # Clean up
+        adapter._stop_event.set()
+        if test_listener_task and not test_listener_task.done():
             test_listener_task.cancel()
             try:
                 await test_listener_task
             except asyncio.CancelledError:
-                pass  # Expected
-        adapter.ws_listener_task = (
-            None  # Clean up task reference from adapter if we set it
-        )
+                pass
+        mock_live_runner.on_trade = original_on_trade
 
+    # Verify the fill was processed correctly
     mock_live_runner.on_trade.assert_called_once()
     called_fill_arg = mock_live_runner.on_trade.call_args[0][0]
 
@@ -617,13 +624,22 @@ async def test_websocket_handles_order_update_event(
 ):
     adapter = connected_adapter
 
+    # Stop any existing tasks
+    adapter._stop_event.set()
     if adapter.ws_listener_task and not adapter.ws_listener_task.done():
         adapter.ws_listener_task.cancel()
         try:
             await adapter.ws_listener_task
         except asyncio.CancelledError:
             pass
+    if adapter.heartbeat_task and not adapter.heartbeat_task.done():
+        adapter.heartbeat_task.cancel()
+        try:
+            await adapter.heartbeat_task
+        except asyncio.CancelledError:
+            pass
     adapter.ws_listener_task = None
+    adapter.heartbeat_task = None
 
     tradovate_order_data = {
         "orderId": "order-78901",
@@ -651,33 +667,40 @@ async def test_websocket_handles_order_update_event(
     if not adapter.ws_connection:
         pytest.fail("connected_adapter did not establish ws_connection")
 
+    # Set up the order update event tracking
+    order_processed = asyncio.Event()
+    original_on_order_update = mock_live_runner.on_order_update
+
+    async def wrapped_on_order_update(*args, **kwargs):
+        await original_on_order_update(*args, **kwargs)
+        order_processed.set()
+
+    mock_live_runner.on_order_update = wrapped_on_order_update
+
+    # Configure WebSocket mock with our test message
     adapter.ws_connection.recv.side_effect = [ws_message, asyncio.CancelledError()]
 
+    # Start a new listener task
     adapter._stop_event.clear()
-    test_listener_task = asyncio.create_task(
-        adapter._ws_listen(), name="test_order_listener"
-    )
-    adapter.ws_listener_task = test_listener_task
+    test_listener_task = asyncio.create_task(adapter._ws_listen())
 
     try:
-        await asyncio.wait_for(test_listener_task, timeout=2)
+        # Wait for the order to be processed
+        await asyncio.wait_for(order_processed.wait(), timeout=2)
     except asyncio.TimeoutError:
-        test_file_logger.warning(
-            "Test listener task for order event did not complete in time."
-        )
-    except asyncio.CancelledError:
-        test_file_logger.info(
-            "Test listener task for order event was cancelled as expected."
-        )
+        pytest.fail("Order event was not processed within timeout")
     finally:
-        if not test_listener_task.done():
+        # Clean up
+        adapter._stop_event.set()
+        if test_listener_task and not test_listener_task.done():
             test_listener_task.cancel()
             try:
                 await test_listener_task
             except asyncio.CancelledError:
                 pass
-        adapter.ws_listener_task = None
+        mock_live_runner.on_order_update = original_on_order_update
 
+    # Verify the order was processed correctly
     mock_live_runner.on_order_update.assert_called_once()
     called_order_arg = mock_live_runner.on_order_update.call_args[0][0]
 

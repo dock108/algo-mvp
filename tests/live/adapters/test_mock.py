@@ -1,11 +1,24 @@
 import pytest
+import pytest_asyncio
+from unittest.mock import MagicMock, AsyncMock
 
 from algo_mvp.live.adapters.mock import MockBrokerAdapter
 
 
 @pytest.fixture
-def mock_adapter():
-    return MockBrokerAdapter()
+def mock_live_runner():
+    runner = MagicMock()
+    runner.on_trade = AsyncMock()
+    runner.on_order_update = AsyncMock()
+    runner.on_broker_event = AsyncMock()
+    return runner
+
+
+@pytest_asyncio.fixture
+async def mock_adapter(mock_live_runner):
+    adapter = MockBrokerAdapter(runner=mock_live_runner)
+    yield adapter
+    await adapter.close()  # Ensure adapter is properly closed
 
 
 @pytest.mark.asyncio
