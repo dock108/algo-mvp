@@ -35,6 +35,9 @@ jobs:
           ${{ runner.os }}-poetry-
     - name: Install dependencies
       run: poetry install --no-interaction
+    - name: Install Playwright
+      run: |
+        poetry run python -m playwright install --with-deps
     - name: Run tests with coverage
       run: |
         poetry run pytest --cov=src --cov-fail-under=85

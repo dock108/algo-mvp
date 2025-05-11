@@ -198,12 +198,10 @@ The CLI will display a live table with the status of each runner, refreshing per
 
 The project includes a Streamlit-based dashboard for monitoring live trading. The dashboard displays:
 
-1. **Equity Curve**: A line chart showing the account equity over time
-2. **Performance Metrics**: Key statistics including Net P&L, CAGR, Max Drawdown, and Hit Rate
-3. **Open Positions**: Current open positions with details like symbol, side, quantity, and price
-4. **Last 20 Trades**: Most recent trades with their performance
-
-### Usage
+- Equity curve chart
+- Performance metrics (Net P&L, CAGR, Max Drawdown, Hit Rate)
+- Open positions
+- Recent trades
 
 To launch the dashboard, run:
 
@@ -211,9 +209,14 @@ To launch the dashboard, run:
 python -m algo_mvp.dashboard
 ```
 
-The dashboard will be available at http://localhost:8501 by default and auto-refreshes every 5 seconds.
+The dashboard will be available at http://localhost:8501 by default and features:
 
-![Dashboard Screenshot](assets/dashboard.png)
+- Dark/light theme toggle (🌗) in the sidebar
+- Responsive layout that adapts to mobile screens (down to 390px width)
+- Manual refresh control to pause/resume the 5-second auto-refresh
+- Styled metric cards and tables
+
+![Dashboard Screenshot](assets/dashboard_dark.png)
 
 ## Supervisor & Health Check
 

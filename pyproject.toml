@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "algo-mvp"
-version = "0.11.0"
+version = "0.11.1"
 description = "Algorithmic trading framework MVP"
 authors = ["Dock108 <michael@dock108.io>"]
 readme = "README.md"
@@ -33,6 +33,7 @@ alpaca-py = "^0.40.0"
 httpx = "^0.27"
 fastapi = "^0.111"
 uvicorn = {version = "^0.29", extras = ["standard"]}
+pytest-playwright = "^0.4.0"
 
 [tool.poetry.group.dev.dependencies]
 responses = "^0.25.7"
@@ -41,6 +42,7 @@ pytest-mock = "^3.14.0"
 pre-commit = "^4.2.0"
 pytest-asyncio = "^0.23.0"
 pytest-timeout = "^2.2.0"
+pytest-playwright = "^0.4.0"
 
 [build-system]
 requires = ["poetry-core"]
