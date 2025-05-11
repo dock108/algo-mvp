@@ -144,3 +144,8 @@
 ### Added
 - FastAPI-based Supervisor with /health and /shutdown routes.
 - Env `SUPERVISOR_TOKEN` for shutdown auth.
+
+## [0.8.0] – 2025-05-11
+### Added
+- SQLite schema (orders, fills, equity, logs) and Alembic migration 0001.
+- CLI `python -m algo_mvp.db` for upgrade / current.

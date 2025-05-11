@@ -19,6 +19,18 @@ Lean backtest + paper-trade stack for Mike (Dock108).
     poetry run streamlit hello
     ```
 
+## Database setup
+
+The project uses SQLite for storing trade history, logs, and equity snapshots. Alembic is used for database migrations.
+
+To create or upgrade the database to the latest version, run:
+
+```bash
+poetry run python -m algo_mvp.db upgrade
+```
+
+This command will create `data/algo.db` if it doesn't exist and apply any pending migrations.
+
 ## Historical Data Fetching
 
 This project includes a module to download historical market data for stocks/ETFs (via Alpaca) and micro-futures (via Tradovate demo).

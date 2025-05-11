@@ -1,4 +1,9 @@
-# FastAPI app + Supervisor class will be implemented here.
+"""
+Supervisor module for managing the Orchestrator service.
+
+This module provides a FastAPI application with endpoints for health checking and controlled shutdown,
+as well as a Supervisor class that monitors and auto-restarts the Orchestrator if it crashes.
+"""
 
 import logging
 import os
@@ -16,6 +21,8 @@ from algo_mvp.orchestrator.manager import Orchestrator
 
 
 class SupervisorConfig(BaseModel):
+    """Configuration model for the Supervisor."""
+
     orchestrator_config: FilePath
     host: str = "0.0.0.0"
     port: int = 8000
@@ -24,11 +31,15 @@ class SupervisorConfig(BaseModel):
 
 
 class HealthResponseRunner(BaseModel):
+    """Model representing the health status of a runner."""
+
     name: str
     status: str
 
 
 class HealthResponse(BaseModel):
+    """Response model for the health endpoint."""
+
     status: Literal["ok", "error"]
     runners: List[HealthResponseRunner]
 
@@ -41,6 +52,15 @@ _supervisor_instance: Optional["Supervisor"] = None
 
 
 class Supervisor:
+    """
+    Supervisor class that manages and monitors the Orchestrator.
+
+    Responsibilities:
+    - Starting and stopping the Orchestrator
+    - Monitoring the Orchestrator's health
+    - Automatically restarting the Orchestrator if it crashes
+    """
+
     def __init__(self, config: SupervisorConfig):
         self.config = config
         self.orchestrator: Optional[Orchestrator] = None
@@ -53,7 +73,8 @@ class Supervisor:
         log_level_attr = getattr(logging, self.config.log_level.upper(), None)
         if log_level_attr is None:
             print(
-                f"Warning: Invalid log level '{self.config.log_level}'. Defaulting to INFO."
+                "Warning: Invalid log level '%s'. Defaulting to INFO."
+                % self.config.log_level
             )
             log_level_attr = logging.INFO
 
@@ -74,10 +95,10 @@ class Supervisor:
         if not self.config.orchestrator_config.is_file():  # Use is_file() for FilePath
             actual_path = self.config.orchestrator_config.resolve()
             logger.error(
-                f"Orchestrator config file not found or is not a file: {actual_path}"
+                "Orchestrator config file not found or is not a file: %s", actual_path
             )
             raise FileNotFoundError(
-                f"Orchestrator config file not found: {actual_path}"
+                "Orchestrator config file not found: %s" % actual_path
             )
 
         self.config.shutdown_token = os.getenv("SUPERVISOR_TOKEN")
@@ -89,13 +110,15 @@ class Supervisor:
             # For this exercise, we allow it but log a warning.
 
     def _start_orchestrator_thread(self):
+        """Start the orchestrator in a new thread if it's not already running."""
         with self.lock:
             if self.orchestrator and self.orchestrator.is_alive():
                 logger.info("Orchestrator already running.")
                 return
 
             logger.info(
-                f"Initializing Orchestrator with config: {self.config.orchestrator_config}"
+                "Initializing Orchestrator with config: %s",
+                self.config.orchestrator_config,
             )
             try:
                 # Replace with actual Orchestrator once available
@@ -103,7 +126,7 @@ class Supervisor:
                     config_path=str(self.config.orchestrator_config)
                 )
             except Exception as e:
-                logger.error(f"Failed to initialize Orchestrator: {e}", exc_info=True)
+                logger.error("Failed to initialize Orchestrator: %s", e, exc_info=True)
                 return  # Don't attempt to start if init fails
 
             logger.info("Starting Orchestrator in a new thread...")
@@ -116,6 +139,7 @@ class Supervisor:
             self.restart_attempts = 0  # Reset attempts on successful start
 
     def start(self):
+        """Start the supervisor and the orchestrator."""
         logger.info("Supervisor starting...")
         self._stop_event.clear()
         self._start_orchestrator_thread()
@@ -127,18 +151,19 @@ class Supervisor:
         watchdog_thread.daemon = True
         watchdog_thread.start()
         logger.info(
-            f"Supervisor started. Health check on http://{self.config.host}:{self.config.port}/health"
+            "Supervisor started. Health check on http://%s:%s/health",
+            self.config.host,
+            self.config.port,
         )
         if not self.config.shutdown_token:
             logger.warning(
                 "Shutdown token is not set. The /shutdown endpoint is currently UNPROTECTED."
             )
         else:
-            logger.info(
-                "Shutdown endpoint /shutdown requires a token (SUPERVISOR_TOKEN)."
-            )
+            logger.info("Shutdown endpoint /shutdown requires token authentication.")
 
     def _watchdog_loop(self):
+        """Monitor the orchestrator's health and restart it if necessary."""
         logger.info("Supervisor watchdog started.")
         while not self._stop_event.is_set():
             time.sleep(1)  # Check orchestrator thread status every second
@@ -185,7 +210,8 @@ class Supervisor:
 
                 if len(self.last_restart_timestamps) < 3:  # Max 3 retries per minute
                     logger.info(
-                        f"Attempting to restart Orchestrator (attempt {self.restart_attempts + 1})..."
+                        "Attempting to restart Orchestrator (attempt %d)...",
+                        self.restart_attempts + 1,
                     )
                     self.last_restart_timestamps.append(now)
                     self.restart_attempts += 1
@@ -205,7 +231,8 @@ class Supervisor:
                                 )  # Give it a moment to stop
                         except Exception as e:
                             logger.error(
-                                f"Watchdog: Error stopping orchestrator during restart attempt: {e}",
+                                "Watchdog: Error stopping orchestrator during restart attempt: %s",
+                                e,
                                 exc_info=True,
                             )
 
@@ -231,7 +258,8 @@ class Supervisor:
         logger.info("Supervisor watchdog stopped.")
 
     def stop(self, from_signal: bool = False):
-        logger.info(f"Supervisor stopping... (Signal: {from_signal})")
+        """Stop the supervisor and orchestrator."""
+        logger.info("Supervisor stopping... (Signal: %s)", from_signal)
         if self._stop_event.is_set():
             logger.info("Supervisor already stopping.")
             return
@@ -242,7 +270,7 @@ class Supervisor:
             try:
                 self.orchestrator.stop()
             except Exception as e:
-                logger.error(f"Error stopping orchestrator: {e}", exc_info=True)
+                logger.error("Error stopping orchestrator: %s", e, exc_info=True)
 
         if self.orchestrator_thread and self.orchestrator_thread.is_alive():
             logger.info("Joining Orchestrator thread...")
@@ -256,6 +284,7 @@ class Supervisor:
 
 
 def get_supervisor() -> Supervisor:
+    """Get the global supervisor instance."""
     global _supervisor_instance
     if _supervisor_instance is None:
         # This should not happen in normal FastAPI flow if startup event is used
@@ -267,6 +296,11 @@ def get_supervisor() -> Supervisor:
 
 @app.on_event("startup")
 async def startup_event():
+    """
+    FastAPI startup event handler.
+
+    Loads supervisor configuration, initializes and starts the supervisor.
+    """
     global _supervisor_instance
     print(
         "STARTUP_EVENT: Entered startup_event.", file=sys.stderr
@@ -276,22 +310,26 @@ async def startup_event():
         "SUPERVISOR_CONFIG_PATH", "configs/supervisor_sample.yaml"
     )
     print(
-        f"STARTUP_EVENT: Attempting to load supervisor config from: {config_path_str}",
+        "STARTUP_EVENT: Attempting to load supervisor config from: %s"
+        % config_path_str,
         file=sys.stderr,
     )
 
     try:
         print(
-            f"STARTUP_EVENT: Step 1: Checking if config file exists at '{config_path_str}'",
+            "STARTUP_EVENT: Step 1: Checking if config file exists at '%s'"
+            % config_path_str,
             file=sys.stderr,
         )
         if not os.path.exists(config_path_str):
             print(
-                f"STARTUP_EVENT ERROR: Config file '{config_path_str}' does not exist (os.path.exists failed).",
+                "STARTUP_EVENT ERROR: Config file '%s' does not exist (os.path.exists failed)."
+                % config_path_str,
                 file=sys.stderr,
             )
             raise FileNotFoundError(
-                f"Explicit check failed: Supervisor configuration file not found at {config_path_str}"
+                "Explicit check failed: Supervisor configuration file not found at %s"
+                % config_path_str
             )
         print("STARTUP_EVENT: Step 1: Config file exists.", file=sys.stderr)
 
@@ -299,10 +337,11 @@ async def startup_event():
             "STARTUP_EVENT: Step 2: Attempting to open and read config file.",
             file=sys.stderr,
         )
-        with open(config_path_str, "r") as f:
+        with open(config_path_str, "r", encoding="utf-8") as f:
             config_data = yaml.safe_load(f)
         print(
-            f"STARTUP_EVENT: Step 2: Config file opened and YAML loaded. Data: {config_data}",
+            "STARTUP_EVENT: Step 2: Config file opened and YAML loaded. Data: %s"
+            % config_data,
             file=sys.stderr,
         )
 
@@ -312,21 +351,25 @@ async def startup_event():
         )
         supervisor_config = SupervisorConfig(**config_data)
         print(
-            f"STARTUP_EVENT: Step 3: SupervisorConfig validated. Orch config path: {supervisor_config.orchestrator_config}",
+            "STARTUP_EVENT: Step 3: SupervisorConfig validated. Orch config path: %s"
+            % supervisor_config.orchestrator_config,
             file=sys.stderr,
         )
 
         print(
-            f"STARTUP_EVENT: Step 3.5: Checking orchestrator config file: {supervisor_config.orchestrator_config}",
+            "STARTUP_EVENT: Step 3.5: Checking orchestrator config file: %s"
+            % supervisor_config.orchestrator_config,
             file=sys.stderr,
         )
         if not supervisor_config.orchestrator_config.is_file():
             print(
-                f"STARTUP_EVENT ERROR: Orch config '{supervisor_config.orchestrator_config}' not a file.",
+                "STARTUP_EVENT ERROR: Orch config '%s' not a file."
+                % supervisor_config.orchestrator_config,
                 file=sys.stderr,
             )
             raise FileNotFoundError(
-                f"Orchestrator config file '{supervisor_config.orchestrator_config}' not found during startup check."
+                "Orchestrator config file '%s' not found during startup check."
+                % supervisor_config.orchestrator_config
             )
         print(
             "STARTUP_EVENT: Step 3.5: Orchestrator config file confirmed to exist.",
@@ -353,30 +396,48 @@ async def startup_event():
         )
 
     except FileNotFoundError as e:
-        print(f"STARTUP_EVENT ERROR (FileNotFoundError): {e}", file=sys.stderr)
+        print("STARTUP_EVENT ERROR (FileNotFoundError): %s" % e, file=sys.stderr)
         _supervisor_instance = None
         return
     except Exception as e:
-        print(f"STARTUP_EVENT ERROR (General Exception): {e}", file=sys.stderr)
+        print("STARTUP_EVENT ERROR (General Exception): %s" % e, file=sys.stderr)
         _supervisor_instance = None
         return
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    """
+    FastAPI shutdown event handler.
+
+    Stops the supervisor and its managed orchestrator.
+    """
     logger.info("FastAPI shutdown event triggered.")
-    supervisor = get_supervisor()
-    if supervisor:
-        supervisor.stop()
+    try:
+        supervisor = get_supervisor()
+        if supervisor:
+            supervisor.stop()
+    except RuntimeError:
+        logger.warning("Supervisor not initialized during shutdown event")
     # Uvicorn handles its own server stop
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check(request: Request):
-    supervisor = get_supervisor()
-    if not supervisor or not supervisor.orchestrator:
-        logger.error("/health: Supervisor or Orchestrator not initialized.")
-        # Attempt to return a 503 if basic components are missing
+async def health_check():
+    """
+    Health check endpoint.
+
+    Returns:
+        HealthResponse: JSON response with status and runner details
+
+    Status Codes:
+        200: All runners are healthy
+        503: One or more runners are not healthy, or supervisor is not initialized
+    """
+    try:
+        supervisor = get_supervisor()
+    except RuntimeError:
+        logger.error("/health: Supervisor not initialized.")
         from fastapi.responses import JSONResponse
 
         return JSONResponse(
@@ -387,11 +448,23 @@ async def health_check(request: Request):
             status_code=503,
         )
 
+    if not supervisor or not supervisor.orchestrator:
+        logger.error("/health: Orchestrator not initialized.")
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            content={
+                "status": "error",
+                "runners": [{"name": "orchestrator_status", "status": "uninitialized"}],
+            },
+            status_code=503,
+        )
+
     try:
         orchestrator_status_dict = supervisor.orchestrator.status()
-        logger.debug(f"/health: Orchestrator status: {orchestrator_status_dict}")
+        logger.debug("/health: Orchestrator status: %s", orchestrator_status_dict)
     except Exception as e:
-        logger.error(f"/health: Error getting orchestrator status: {e}", exc_info=True)
+        logger.error("/health: Error getting orchestrator status: %s", e, exc_info=True)
         # This means the orchestrator itself might be broken or in a bad state
         # Return a 503 if we can't even get status
         from fastapi.responses import JSONResponse
@@ -458,6 +531,21 @@ async def shutdown_server(
     request: Request,
     token: Optional[str] = Query(None),  # Token from query parameter
 ):
+    """
+    Shutdown endpoint to gracefully stop the supervisor and orchestrator.
+
+    Args:
+        request: The FastAPI request object, used to access app.state
+        token: Optional token for authentication
+
+    Returns:
+        dict: Message confirming shutdown initiated
+
+    Status Codes:
+        200: Shutdown initiated successfully
+        401: Token required but not provided
+        403: Invalid token provided
+    """
     supervisor = get_supervisor()
 
     # Token validation
@@ -468,9 +556,8 @@ async def shutdown_server(
             )
             raise HTTPException(status_code=401, detail="Shutdown token required.")
         if token != supervisor.config.shutdown_token:
-            logger.warning(
-                f"/shutdown: Invalid token received: {token[:5]}..."
-            )  # Log only a snippet
+            # Don't log any part of the token
+            logger.warning("/shutdown: Invalid token received")
             raise HTTPException(status_code=403, detail="Invalid shutdown token.")
 
     logger.info("/shutdown endpoint called. Requesting supervisor stop.")

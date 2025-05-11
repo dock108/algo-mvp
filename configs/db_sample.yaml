@@ -1,0 +1,12 @@
+# Sample database configuration
+# This file documents the default database URL and path.
+# The application uses the ALGO_DB_URL environment variable if set,
+# otherwise it defaults to the URL specified here or in the code.
+
+# Default SQLite database URL
+# Path is relative to the project root if a relative path is used (e.g., data/algo.db)
+# For an in-memory database (often used for testing), use: sqlite:///:memory:
+url: "sqlite:///data/algo.db"
+
+# Example for PostgreSQL:
+# url: "postgresql://user:password@host:port/database"

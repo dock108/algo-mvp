@@ -68,16 +68,16 @@ def main():
         print("Warning: SUPERVISOR_TOKEN environment variable is not set.")
         print("The /shutdown endpoint will be unprotected.")
     else:
-        print("Supervisor token is set. Use this token for the /shutdown endpoint.")
-        # Avoid printing the token itself unless for very specific debug scenarios.
-        # print(f"  -> Token: {token}")
+        print("Supervisor token authentication enabled for the /shutdown endpoint.")
+        # Never print the token, not even in debug mode
 
     print(
         f"Starting Supervisor HTTP server on http://{sup_config.host}:{sup_config.port}"
     )
     print(f"Health endpoint: http://{sup_config.host}:{sup_config.port}/health")
     print(
-        f"Shutdown endpoint: POST http://{sup_config.host}:{sup_config.port}/shutdown?token=<YOUR_TOKEN>"
+        f"Shutdown endpoint: POST http://{sup_config.host}:{sup_config.port}/shutdown"
+        + (" (requires token)" if token else " (unprotected)")
     )
 
     # Programmatic Uvicorn run to allow passing server instance to app state for graceful shutdown

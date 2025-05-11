@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "algo-mvp"
-version = "0.7.1"
+version = "0.8.0"
 description = "MVP trading algorithm project"
 authors = ["Dock108 <michael@dock108.io>"]
 readme = "README.md"
@@ -13,7 +13,8 @@ vectorbt = "^0.26.2"
 numpy = ">=1.23.0"
 streamlit = "^1.45.0"
 # alpaca-trade-api = "^3.2.0" # Replaced by alpaca-py
-sqlalchemy = ">=2.0"
+sqlalchemy = "^2.0"
+alembic    = "^1.13"
 pydantic = "^2.8.2"
 tenacity = "^8.5.0"
 pyarrow = "^17.0.0"
