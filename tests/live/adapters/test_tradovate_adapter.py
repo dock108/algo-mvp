@@ -337,7 +337,6 @@ async def test_rest_call_with_expired_token_refreshes_token(adapter, mock_http_c
 
     # Capture headers
     captured_headers = {}
-    original_request_method = mock_http_client.return_value.request
 
     async def capture_request_side_effect(method, endpoint, headers=None, **kwargs):
         nonlocal captured_headers
@@ -346,10 +345,14 @@ async def test_rest_call_with_expired_token_refreshes_token(adapter, mock_http_c
         ):  # Assuming get_cash makes a GET to /account/list
             if headers:  # headers might be None if not passed
                 captured_headers = headers.copy()
-        # Return the default mock response for .request or a specific one if needed
-        return await original_request_method(
-            method, endpoint, headers=headers, **kwargs
-        )
+            # Return the mock response directly instead of calling the original method again
+            return get_account_list_response
+        # For other endpoints, return the default response
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={})
+        mock_response.raise_for_status = MagicMock()
+        return mock_response
 
     mock_http_client.return_value.request.side_effect = capture_request_side_effect
 
@@ -362,6 +365,7 @@ async def test_rest_call_with_expired_token_refreshes_token(adapter, mock_http_c
 
     # --- Reset token and call get_cash again ---
     adapter.access_token_details = None
+    adapter._account_id = None  # Reset account_id to mimic initial state for get_cash
     captured_headers = {}  # Reset for next capture
 
     # Expect: POST (expired), POST (fresh)
@@ -1413,7 +1417,15 @@ async def test_get_cash_fetches_account_id_if_not_set(adapter, mock_http_client)
             mock_response.json = MagicMock(return_value=initial_account_list_response)
             mock_response.raise_for_status = MagicMock()
             return mock_response
-        # Fallback for other unexpected calls
+        elif endpoint == "/position/list" and method == "GET":
+            mock_response = AsyncMock(status_code=200)
+            # Ensure that this mock is only called *after* _account_id would have been set
+            assert adapter._account_id == expected_account_id, (
+                "_account_id not set before /position/list call"
+            )
+            mock_response.json = MagicMock(return_value=[])
+            mock_response.raise_for_status = MagicMock()
+            return mock_response
         error_response = AsyncMock(status_code=404)
         error_response.json = MagicMock(return_value={"error": "Not Found"})
         error_response.raise_for_status = MagicMock(
@@ -1426,7 +1438,6 @@ async def test_get_cash_fetches_account_id_if_not_set(adapter, mock_http_client)
     mock_http_client.return_value.request.side_effect = custom_request_mock
 
     try:
-        # Call get_cash when _account_id is None
         retrieved_cash = await adapter.get_cash()
 
         assert adapter._account_id == expected_account_id

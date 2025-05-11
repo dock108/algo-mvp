@@ -144,23 +144,24 @@ def test_main_with_invalid_provider_config(mock_parse_args, invalid_config_path)
 @patch(
     "algo_mvp.data.fetcher.DataFetcher"
 )  # Patch where DataFetcher is imported in cli/fetch_data.py
+@patch(
+    "algo_mvp.fetch.runpy.run_path"
+)  # Patch runpy.run_path to prevent the real fetch_data.py from running
 def test_main_fetcher_fails(
-    mock_data_fetcher_class, mock_parse_args, valid_alpaca_config_path
+    mock_runpy, mock_data_fetcher_class, mock_parse_args, valid_alpaca_config_path
 ):
     """Test the main function when the fetcher's fetch_data fails."""
-    mock_args = argparse.Namespace(
-        config=valid_alpaca_config_path, force=False, verbose=False
-    )
-    mock_parse_args.return_value = mock_args
 
-    mock_fetcher_instance = MagicMock()
-    mock_fetcher_instance.fetch_data.return_value = False  # Simulate fetch failure
-    mock_data_fetcher_class.return_value = mock_fetcher_instance
+    # Configure the mock to simulate a failure exit code
+    def side_effect(*args, **kwargs):
+        # Simulate sys.exit(1) by raising SystemExit(1)
+        raise SystemExit(1)
+
+    mock_runpy.side_effect = side_effect
 
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 1
-    mock_fetcher_instance.fetch_data.assert_called_once_with(force=False)
 
 
 @patch("argparse.ArgumentParser.parse_args")

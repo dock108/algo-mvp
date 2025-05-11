@@ -775,9 +775,8 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
             if accounts and isinstance(accounts, list) and len(accounts) > 0:
                 # Assuming we use the first account. Logic might be needed for multiple accounts.
                 self._account_id = accounts[0].get("id")
-                self._cash = float(
-                    accounts[0].get("balance", 0.0)
-                )  # Initial cash balance
+                balance = float(accounts[0].get("balance", 0.0))
+                self._cash = {"USD": balance}  # Initialize as a dictionary with USD key
                 logger.info(
                     f"Account ID set to {self._account_id}, initial cash: {self._cash}"
                 )
@@ -936,11 +935,9 @@ class TradovateBrokerAdapter(BrokerAdapterBase):
                 f"Failed to submit order: {e.response.status_code} - {e.response.text}"
             )
             # Parse error for details if possible, e.g. margin error
-            _error_details = (  # Renamed to indicate it might not be used further here
-                e.response.json()
-                if "application/json" in e.response.headers.get("content-type", "")
-                else {"message": e.response.text}
-            )
+            # Error details might be useful for future enhancements
+            if "application/json" in e.response.headers.get("content-type", ""):
+                e.response.json()  # We could extract specific error info here if needed
             # You might want to return an Order object with status 'rejected' and a reason
             # For now, returning None or re-raising
             raise  # Let retry handle it or propagate

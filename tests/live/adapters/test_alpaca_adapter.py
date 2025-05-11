@@ -2,6 +2,7 @@ import asyncio  # For calling async handler
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 from algo_mvp.live.adapters.alpaca import AlpacaBrokerAdapter
 from algo_mvp.live.models import Order  # Import Order
@@ -58,9 +59,15 @@ def mock_trading_stream():
         yield mock_stream_instance
 
 
-@pytest.fixture
-def alpaca_adapter(mock_live_runner, mock_trading_client, mock_trading_stream):
-    return AlpacaBrokerAdapter(live_runner=mock_live_runner)
+@pytest_asyncio.fixture
+async def alpaca_adapter(mock_live_runner, mock_trading_client, mock_trading_stream):
+    adapter_instance = AlpacaBrokerAdapter(live_runner=mock_live_runner)
+    try:
+        yield adapter_instance
+    finally:
+        # Ensure close is called to stop threads and cleanup resources
+        if adapter_instance.stream_thread and adapter_instance.stream_thread.is_alive():
+            adapter_instance.close()
 
 
 # --- Basic Initialization Tests ---

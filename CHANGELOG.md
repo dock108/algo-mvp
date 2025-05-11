@@ -188,3 +188,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.10.0] – 2025-05-11
 ### Added
 - Analytics API for P&L curves, trade logs, summary stats, drawdowns, open positions.
+
+## [0.11.0] – 2025-05-11
+### Added
+- Read-only Streamlit dashboard: equity curve, stats, open positions, last trades.
+- Auto-refresh every 5 seconds to display real-time updates.
+- CLI command for launching the dashboard: `python -m algo_mvp.dashboard`
