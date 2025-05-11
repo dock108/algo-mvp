@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.12"]
+        python-version: ["3.10", "3.11"]
     env:
       OPENBLAS_NUM_THREADS: 1  # Prevent memory issues with vectorbt
       NUMEXPR_MAX_THREADS: 4   # Prevent OOM/timeouts
