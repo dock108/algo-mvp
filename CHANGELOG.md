@@ -149,3 +149,10 @@
 ### Added
 - SQLite schema (orders, fills, equity, logs) and Alembic migration 0001.
 - CLI `python -m algo_mvp.db` for upgrade / current.
+
+## [0.9.0] – 2025-05-11
+### Added
+- Thread-safe DBWriter middleware that records orders, fills, equity, and logs to SQLite.
+- LiveRunner now logs to DB automatically.
+- Real-time queryable P&L history in SQLite while trading is live.
+- Comprehensive unit tests for the writer and LiveRunner integration.

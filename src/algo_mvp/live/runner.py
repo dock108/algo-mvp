@@ -5,7 +5,8 @@ import asyncio
 
 import backtrader as bt
 
-from algo_mvp.live.adapters import AlpacaBrokerAdapter  # Import AlpacaBrokerAdapter
+from algo_mvp.db import get_writer
+from algo_mvp.live.adapters.alpaca import AlpacaBrokerAdapter
 
 # import pendulum # No longer used
 
@@ -31,6 +32,7 @@ class LiveRunner:
         datafeed_config: dict,
         on_trade=None,
         on_error=None,
+        db_writer=None,  # NEW: Optional DBWriter instance
     ):
         self.strategy_path = strategy_path
         self.params = params
@@ -45,6 +47,10 @@ class LiveRunner:
         self._thread = None
         self.cerebro = None
         # self.console = Console()  # Replaced by logger
+
+        # Initialize the database writer if not provided
+        self.db_writer = db_writer or get_writer()
+        self._db_writer_closed = False
 
         # Instantiate broker adapter based on config
         provider = broker_config.get("provider")
@@ -104,6 +110,10 @@ class LiveRunner:
         # Timestamps are typically handled by the logger's formatter.
         logger.log(level, f"LiveRunner: {message}")
 
+        # Log critical messages to the database
+        if level >= logging.ERROR and self.db_writer:
+            self.db_writer.log_message("ERROR", message)
+
     def _import_strategy(self):
         module_path, class_name = self.strategy_path.rsplit(":", 1)
         module = importlib.import_module(module_path)
@@ -148,6 +158,19 @@ class LiveRunner:
                 self._log(
                     "on_error callback registered.", level=logging.DEBUG
                 )  # Use logging level
+
+            # When adapter's submit_order() succeeds, log to database
+            if self.broker_adapter and hasattr(self.broker_adapter, "submit_order"):
+                original_submit_order = self.broker_adapter.submit_order
+
+                async def wrapped_submit_order(*args, **kwargs):
+                    result = await original_submit_order(*args, **kwargs)
+                    if result and self.db_writer:
+                        self.db_writer.log_order(result)
+                        self._log(f"Logged order {result.id} to database")
+                    return result
+
+                self.broker_adapter.submit_order = wrapped_submit_order
 
             def run_cerebro():
                 try:
@@ -218,6 +241,18 @@ class LiveRunner:
                 if self.on_error:
                     self.on_error(e)
 
+        # Close the database writer if we haven't done so already
+        if self.db_writer and not self._db_writer_closed:
+            try:
+                self._log("Closing database writer...", level=logging.INFO)
+                self.db_writer.close()
+                self._db_writer_closed = True
+                self._log("Database writer closed.", level=logging.INFO)
+            except Exception as e:
+                self._log(f"Error closing database writer: {e}", level=logging.ERROR)
+                if self.on_error:
+                    self.on_error(e)
+
         # Final status update
         if self._status != "error":
             self._status = "stopped"
@@ -228,3 +263,26 @@ class LiveRunner:
 
     def status(self) -> str:
         return self._status
+
+    async def on_trade(self, order):
+        """Handle trade events from the broker adapter.
+
+        This is called when a fill occurs. In addition to any custom callback,
+        we now log the fill to the database.
+        """
+        # Log the fill to the database
+        if hasattr(order, "fills") and order.fills:
+            for fill in order.fills:
+                if self.db_writer:
+                    self.db_writer.log_fill(fill)
+                    self._log(f"Logged fill for order {order.id} to database")
+
+        # Call the original callback if it exists
+        if self.on_trade:
+            await self.on_trade(order)
+
+    def log_equity(self, timestamp, equity):
+        """Log the current equity value to the database."""
+        if self.db_writer:
+            self.db_writer.log_equity(timestamp, equity)
+            self._log(f"Logged equity snapshot: {equity} at {timestamp}")

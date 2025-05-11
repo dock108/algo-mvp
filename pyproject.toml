@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "algo-mvp"
-version = "0.8.0"
+version = "0.9.0"
 description = "MVP trading algorithm project"
 authors = ["Dock108 <michael@dock108.io>"]
 readme = "README.md"
@@ -39,6 +39,7 @@ pytest-cov = "^6.1.1"
 pytest-mock = "^3.14.0"
 pre-commit = "^4.2.0"
 pytest-asyncio = "^0.23.0"
+pytest-timeout = "^2.2.0"
 
 [build-system]
 requires = ["poetry-core"]

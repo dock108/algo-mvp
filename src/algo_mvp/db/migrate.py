@@ -23,11 +23,20 @@ def main():
 
     alembic_cfg = Config(alembic_cfg_path)
 
-    if args.url:
-        alembic_cfg.set_main_option("sqlalchemy.url", args.url)
-    elif os.getenv("ALGO_DB_URL"):
-        alembic_cfg.set_main_option("sqlalchemy.url", os.getenv("ALGO_DB_URL"))
-    # If neither --url nor ALGO_DB_URL is set, Alembic will use the default from alembic.ini (via env.py)
+    # Get the database URL
+    db_url = args.url or os.getenv("ALGO_DB_URL", "sqlite:///data/algo.db")
+    alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+
+    # For SQLite file URLs, ensure the parent directory exists
+    if db_url.startswith("sqlite:///"):
+        # Extract the file path part (skip sqlite:///)
+        file_path = db_url[10:]
+        # Only create directory if it's a file path, not memory or relative path
+        if file_path and not file_path.startswith(":") and "/" in file_path:
+            # Create parent directory if it doesn't exist
+            dir_path = os.path.dirname(file_path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
 
     if args.action == "upgrade":
         command.upgrade(alembic_cfg, "head")

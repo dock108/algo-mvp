@@ -31,6 +31,21 @@ poetry run python -m algo_mvp.db upgrade
 
 This command will create `data/algo.db` if it doesn't exist and apply any pending migrations.
 
+## Real-time DB Logging
+
+The project includes a thread-safe DBWriter middleware that automatically logs all trading activity to the SQLite database. All live trading orders, fills, equity snapshots, and error logs are persisted in real-time, providing a complete record of your trading system's activity.
+
+The DBWriter uses a background worker thread with a queue to ensure that database writes don't block the main trading threads, maintaining system responsiveness even during high-frequency trading.
+
+### Features
+
+- Thread-safe, queue-based architecture for non-blocking database writes
+- Automatic logging of orders, fills, equity snapshots, and critical messages
+- Integration with LiveRunner for seamless recording of all trading activity
+- Graceful shutdown with proper queue flushing to prevent data loss
+
+No additional configuration is required - the LiveRunner automatically sets up the DBWriter when it starts.
+
 ## Historical Data Fetching
 
 This project includes a module to download historical market data for stocks/ETFs (via Alpaca) and micro-futures (via Tradovate demo).
