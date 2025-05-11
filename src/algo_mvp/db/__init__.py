@@ -5,6 +5,9 @@ from sqlalchemy.orm import sessionmaker
 from alembic.config import Config
 from alembic import command
 
+# Path to this package
+package_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+
 
 def get_engine(url=None):
     url = url or os.getenv("ALGO_DB_URL", "sqlite:///data/algo.db")
@@ -19,24 +22,51 @@ def get_engine(url=None):
             dir_path = Path(file_path).parent
             os.makedirs(dir_path, exist_ok=True)
 
-    return create_engine(url, echo=False, future=True)
+    # Create and return the engine
+    engine = create_engine(url)
+    return engine
+
+
+def get_sessionmaker(engine=None):
+    """Get a SQLAlchemy sessionmaker.
+
+    Args:
+        engine: Optional SQLAlchemy engine to use. If not provided,
+               a new engine will be created using get_engine().
+
+    Returns:
+        sqlalchemy.orm.sessionmaker: A sessionmaker bound to the engine.
+    """
+    if engine is None:
+        engine = get_engine()
+    Session = sessionmaker(bind=engine)
+    return Session
 
 
 def upgrade_db(engine):
-    """Run the latest Alembic migration revision against a given engine.
+    """Run database migrations to upgrade to the latest schema version.
 
     Args:
-        engine: SQLAlchemy engine instance to run migrations on
+        engine: SQLAlchemy engine to use for the migration
     """
-    # Get the path to the alembic.ini file
-    script_dir = os.path.dirname(os.path.realpath(__file__))
-    alembic_cfg_path = os.path.join(script_dir, "alembic.ini")
+    # Create an Alembic config pointing to alembic.ini in this package
+    alembic_cfg = Config()
+    alembic_cfg.set_main_option("script_location", str(package_dir / "alembic"))
 
-    alembic_cfg = Config(alembic_cfg_path)
-    alembic_cfg.set_main_option("sqlalchemy.url", str(engine.url))
+    # Set the database connection URL
+    if hasattr(engine, "url"):  # SQLAlchemy 1.4+
+        url = str(engine.url)
+    else:  # Older SQLAlchemy
+        url = str(engine.engine.url)
 
-    # Run the upgrade to the latest revision
-    command.upgrade(alembic_cfg, "head")
+    alembic_cfg.set_main_option("sqlalchemy.url", url)
+
+    # Run the migration to the latest version
+    with engine.begin() as connection:
+        alembic_cfg.attributes["connection"] = connection
+        command.upgrade(alembic_cfg, "head")
+
+    return True
 
 
 SessionLocal = sessionmaker(bind=get_engine(), expire_on_commit=False)
@@ -63,3 +93,7 @@ def get_writer(engine=None, queue_max=1000):
         _writer_instance = DBWriter(engine=engine, queue_max=queue_max)
 
     return _writer_instance
+
+
+# Explicitly export the upgrade_db helper function
+__all__ = ["get_engine", "upgrade_db", "SessionLocal", "get_writer"]

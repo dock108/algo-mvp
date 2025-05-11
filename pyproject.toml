@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "algo-mvp"
 version = "0.9.1"
-description = "MVP trading algorithm project"
+description = "Algorithmic trading framework MVP"
 authors = ["Dock108 <michael@dock108.io>"]
 readme = "README.md"
 packages = [{include = "algo_mvp", from = "src"}]

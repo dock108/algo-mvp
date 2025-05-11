@@ -1,6 +1,33 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.9.1] – 2025-05-11
+### Added
+- Transaction-rollback fixtures and high-coverage edge-case tests for DBWriter.
+### Changed
+- CI coverage threshold raised to 85%.
+
+## [0.9.0] - 2025-05-01
+### Added
+- Initial version with core functionality
+- Basic trading engine
+- Backtesting framework
+- Database handling for orders and fills
+
 ## [0.1.0] – 2025-05-08
 ### Added
-- Initial repo skeleton, Poetry config, CI, pre-commit hooks, smoke test.
+- Added LiveRunner with asynchronous order execution
+- Broker adapter system for connecting to trading venues
+- Error recovery with automatic reconnect
+- Configurable logging levels
+### Changed
+- Refactored core trading logic for better separation of concerns
+### Fixed
+- Fixed potential thread/resource leaks when shutting down the LiveRunner.
 
 ## [0.2.0] – 2025-05-08
 ### Added
@@ -97,12 +124,6 @@
 
 ### Fixed
 - Fixed potential thread/resource leaks when shutting down the LiveRunner.
-
-## [0.9.1] – 2025-05-11
-### Added
-- Transaction-rollback fixtures and high-coverage edge-case tests for DBWriter.
-### Changed
-- CI coverage threshold raised to 85 %.
 
 ## [Unreleased] - YYYY-MM-DD
 
