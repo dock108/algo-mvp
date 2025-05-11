@@ -1,0 +1,561 @@
+import pytest
+import yaml
+import time
+
+# import os # Unused
+from unittest.mock import MagicMock  # Removed call
+
+# from pathlib import Path # Unused
+import threading
+from unittest.mock import patch
+
+from algo_mvp.orchestrator.manager import (
+    Orchestrator,
+)  # OrchestratorConfig and RunnerConfig not directly used in tests yet
+
+
+class SimulatedCrashError(Exception):
+    """Custom exception for simulating runner crashes in tests."""
+
+    pass
+
+
+# pytest_plugins = ['pytester']  # Not needed for these tests
+
+
+@pytest.fixture
+def mock_liverunner_class(mocker):
+    """Fixture to mock the LiveRunner class."""
+    # Using mocker.patch correctly for the class
+    mock_live_runner_cls = mocker.patch(
+        "algo_mvp.orchestrator.manager.LiveRunner", autospec=True
+    )
+
+    # This factory will be called whenever LiveRunner() is instantiated in the code under test
+    def mock_runner_instance_factory(*args, **kwargs):
+        instance = MagicMock(
+            name=f"LiveRunnerInstance({kwargs.get('config_path', 'unknown')})"
+        )
+        instance.config_path = kwargs.get("config_path")
+        instance._stop_event = threading.Event()
+        instance._actually_started_event = (
+            threading.Event()
+        )  # Signals that _start_behavior has been entered
+        instance._test_has_set_crash_flag_event = (
+            threading.Event()
+        )  # Signals that test has set the crash flag
+        instance.thread = None
+        instance.logger = MagicMock(
+            spec=["info", "warning", "error", "debug", "critical"]
+        )
+        instance._crash_after_start = False
+        instance._crash_mid_run = False
+
+        instance.start = MagicMock(name=f"start_for_{instance.config_path}")
+        instance.stop = MagicMock(name=f"stop_for_{instance.config_path}")
+        instance.is_alive = MagicMock(
+            return_value=True, name=f"is_alive_for_{instance.config_path}"
+        )
+
+        def _start_behavior(instance_arg):
+            # Using instance_arg to be clear it's the one passed, not from outer scope directly if there were ambiguity
+            instance_arg.logger.info(
+                f"Mock LiveRunner {instance_arg.name} _start_behavior ENTERED. Thread: {threading.current_thread().name}"
+            )
+            instance_arg._actually_started_event.set()  # Signal test that we are in _start_behavior
+
+            # Wait for the test to explicitly set the crash flag
+            instance_arg.logger.info(
+                f"Mock LiveRunner {instance_arg.name} _start_behavior waiting for _test_has_set_crash_flag_event."
+            )
+            flag_set_event_received = instance_arg._test_has_set_crash_flag_event.wait(
+                timeout=2.0
+            )  # Increased timeout for safety
+            if not flag_set_event_received:
+                instance_arg.logger.error(
+                    f"Mock LiveRunner {instance_arg.name} _start_behavior TIMEOUT waiting for _test_has_set_crash_flag_event."
+                )
+                # Proceed with current flags, likely won't crash as intended
+
+            final_action = "UNKNOWN_AFTER_EVENT_WAIT"
+            try:
+                if instance_arg._crash_after_start:
+                    instance_arg.logger.warning(
+                        f"Mock LiveRunner {instance_arg.name} _start_behavior: _crash_after_start is TRUE. RAISING SimulatedCrashError."
+                    )
+                    final_action = "RAISE_CRASH_AFTER_START"
+                    instance_arg.is_alive.return_value = False
+                    raise SimulatedCrashError(
+                        f"Simulated crash for {instance_arg.name} from _start_behavior (crash_after_start)"
+                    )
+
+                loop_count = 0
+                while not instance_arg._stop_event.wait(timeout=0.01):
+                    loop_count += 1
+                    if instance_arg._crash_mid_run:
+                        instance_arg.logger.warning(
+                            f"Mock LiveRunner {instance_arg.name} _start_behavior: _crash_mid_run is TRUE. RAISING SimulatedCrashError from loop."
+                        )
+                        final_action = "RAISE_CRASH_MID_RUN"
+                        instance_arg.is_alive.return_value = False
+                        raise SimulatedCrashError(
+                            f"Simulated crash mid-run for {instance_arg.name} from _start_behavior"
+                        )
+                    if loop_count > 500 and instance_arg.name == "runner1":
+                        instance_arg.logger.error(
+                            f"Mock LiveRunner {instance_arg.name} _start_behavior: Safety break in loop after {loop_count} iterations."
+                        )
+                        final_action = "SAFETY_BREAK_LOOP"
+                        break
+
+                instance_arg.is_alive.return_value = False
+                if instance_arg._stop_event.is_set():
+                    final_action = "NORMAL_EXIT_LOOP_STOP_EVENT_SET"
+                    instance_arg.logger.info(
+                        f"Mock LiveRunner {instance_arg.name} _start_behavior: Exited loop (stop_event). Count: {loop_count}"
+                    )
+                else:
+                    final_action = "NORMAL_EXIT_LOOP_OTHER"
+                    instance_arg.logger.info(
+                        f"Mock LiveRunner {instance_arg.name} _start_behavior: Exited loop (other). Count: {loop_count}"
+                    )
+
+            except SimulatedCrashError:
+                instance_arg.logger.critical(
+                    f"Mock LiveRunner {instance_arg.name} _start_behavior: CAUGHT SCE. RE-RAISING. Thread: {threading.current_thread().name}"
+                )
+                final_action = "CAUGHT_AND_RERAISE_SCE"
+                raise
+            except Exception as e_inner:
+                instance_arg.is_alive.return_value = False
+                instance_arg.logger.critical(
+                    f"Mock LiveRunner {instance_arg.name} _start_behavior: CAUGHT UNEXPECTED Exception: {e_inner}. RE-RAISING. Thread: {threading.current_thread().name}",
+                    exc_info=True,
+                )
+                final_action = f"CAUGHT_UNEXPECTED_{type(e_inner).__name__}"
+                raise
+            finally:
+                current_thread = threading.current_thread()
+                instance_arg.logger.critical(
+                    f"Mock LiveRunner {instance_arg.name} _start_behavior: FINALLY block. Action: {final_action}. Thread: {current_thread.name}, Alive: {current_thread.is_alive()}"
+                )
+
+        # Pass the specific instance to _start_behavior using lambda
+        instance.start.side_effect = lambda: _start_behavior(instance)
+
+        def _stop_behavior():
+            instance.logger.info(f"Mock LiveRunner {instance.name} stop() called")
+            instance._stop_event.set()  # Signal the simulated run loop to exit
+            # is_alive will be set to False by the _start_behavior loop when it exits
+            # This is now handled by _start_behavior itself.
+
+        instance.stop.side_effect = _stop_behavior
+        return instance
+
+    mock_live_runner_cls.side_effect = mock_runner_instance_factory
+    return mock_live_runner_cls
+
+
+@pytest.fixture
+def sample_orchestrator_config_dict():
+    return {
+        "runners": [
+            {"name": "runner1", "config": "config/runner1.yaml"},
+            {"name": "runner2", "config": "config/runner2.yaml"},
+        ],
+        "log_level": "INFO",
+        "restart_on_crash": True,
+    }
+
+
+@pytest.fixture
+def sample_orchestrator_config_file(tmp_path, sample_orchestrator_config_dict):
+    """Creates a temporary YAML config file for the orchestrator."""
+    config_file = tmp_path / "orchestrator_test_config.yaml"
+    with open(config_file, "w") as f:
+        yaml.dump(sample_orchestrator_config_dict, f)
+    return config_file
+
+
+def test_orchestrator_initialization(
+    sample_orchestrator_config_file, mock_liverunner_class
+):
+    """Test basic orchestrator initialization and that it loads config."""
+    orchestrator = Orchestrator(config_path=str(sample_orchestrator_config_file))
+    assert orchestrator is not None
+    assert len(orchestrator.config.runners) == 2
+    assert orchestrator.config.runners[0].name == "runner1"
+    assert orchestrator.config.log_level == "INFO"
+    assert orchestrator.config.restart_on_crash is True
+    # LiveRunner class should not have been called/instantiated yet
+    mock_liverunner_class.assert_not_called()
+
+
+def test_orchestrator_start_launches_runners(
+    sample_orchestrator_config_file,
+    mock_liverunner_class,
+    sample_orchestrator_config_dict,
+):
+    """Test that orchestrator.start() launches all configured runners."""
+    orchestrator = Orchestrator(config_path=str(sample_orchestrator_config_file))
+    orchestrator.start()
+    time.sleep(0.2)  # Increased sleep to 0.2 for threads to reliably start
+
+    assert mock_liverunner_class.call_count == len(
+        sample_orchestrator_config_dict["runners"]
+    )
+
+    # Check that runner instances were created with correct config paths and names set by orchestrator
+    # And their start methods were called, and threads are alive.
+    assert len(orchestrator.runner_instances) == 2
+    for r_conf in sample_orchestrator_config_dict["runners"]:
+        runner_name = r_conf["name"]
+        runner_config_path = r_conf["config"]
+        assert runner_name in orchestrator.runner_instances
+        runner_instance = orchestrator.runner_instances[runner_name]
+
+        # Check if the mock LiveRunner was instantiated with the correct config_path
+        # This requires inspecting the calls to the patched LiveRunner class
+        found_call = False
+        for call_obj in mock_liverunner_class.call_args_list:
+            args, kwargs = call_obj
+            # Check kwargs first, then args if present
+            if kwargs.get("config_path") == runner_config_path:
+                found_call = True
+                break
+            if args and args[0] == runner_config_path:
+                found_call = True
+                break
+        assert found_call, (
+            f"LiveRunner not called with config_path {runner_config_path}"
+        )
+
+        assert runner_instance.name == runner_name  # Name should be set by orchestrator
+        runner_instance.start.assert_called_once()
+        assert orchestrator.runner_threads[runner_name].is_alive(), (
+            f"Thread for {runner_name} is not alive"
+        )
+
+    # Store references to the mock instances to check their individual states after orchestrator stop
+    # This is done before orchestrator.stop() clears its internal references
+    created_instances = list(orchestrator.runner_instances.values())
+
+    orchestrator.stop()  # Cleanup
+    time.sleep(0.1)  # Allow stop to propagate
+
+    # Orchestrator.stop() clears runner_threads and runner_instances, so we check they are empty.
+    assert not orchestrator.runner_threads, "runner_threads should be empty after stop"
+    assert not orchestrator.runner_instances, (
+        "runner_instances should be empty after stop"
+    )
+
+    # Check that the individual mock runner instances had their stop() method called
+    # and their internal stop_event set, and they report as not alive.
+    for inst in created_instances:
+        inst.stop.assert_called_once()
+        assert inst._stop_event.is_set()
+        assert inst.is_alive() is False, (
+            f"Mock instance {inst.name} still reporting alive after stop"
+        )
+
+
+def test_orchestrator_stop_method(
+    sample_orchestrator_config_file,
+    mock_liverunner_class,
+    sample_orchestrator_config_dict,
+):
+    """Test that orchestrator.stop() stops all runners and threads."""
+    orchestrator = Orchestrator(config_path=str(sample_orchestrator_config_file))
+    orchestrator.start()
+    time.sleep(0.2)  # Allow runners to start, increased from 0.1
+
+    assert len(orchestrator.runner_instances) == 2
+    # Keep a reference to the instances before they are cleared by orchestrator.stop()
+    initial_runner_instances = dict(orchestrator.runner_instances)
+
+    orchestrator.stop()
+    time.sleep(0.2)  # Allow for stop propagation and thread joining
+
+    for name, runner_instance in initial_runner_instances.items():
+        runner_instance.stop.assert_called_once()
+        assert runner_instance._stop_event.is_set()
+        assert runner_instance.is_alive() is False, (
+            f"Mock instance {name} not reporting dead after stop"
+        )
+
+    # Orchestrator clears these collections on stop
+    assert not orchestrator.runner_instances, (
+        "runner_instances collection should be empty after stop"
+    )
+    assert not orchestrator.runner_threads, (
+        "runner_threads collection should be empty after stop"
+    )
+    assert orchestrator._stop_event.is_set()
+    if (
+        orchestrator.config.restart_on_crash and orchestrator._watchdog_thread
+    ):  # Watchdog only runs if restart_on_crash
+        assert not orchestrator._watchdog_thread.is_alive(), (
+            "Watchdog thread should be stopped"
+        )
+    elif not orchestrator.config.restart_on_crash:
+        assert orchestrator._watchdog_thread is None, (
+            "Watchdog thread should not have been started if restart_on_crash is false"
+        )
+
+
+def test_orchestrator_status_reflects_state(
+    sample_orchestrator_config_file, mock_liverunner_class
+):
+    """Test that orchestrator.status() correctly reflects runner states."""
+    orchestrator = Orchestrator(config_path=str(sample_orchestrator_config_file))
+
+    # Before start
+    status_before_start = orchestrator.status()
+    assert status_before_start["runner1"] == "pending_or_failed_to_start"
+    assert status_before_start["runner2"] == "pending_or_failed_to_start"
+
+    orchestrator.start()
+    time.sleep(0.1)  # Allow runners to start
+
+    # After start, runners should be running
+    status_running = orchestrator.status()
+    assert status_running["runner1"] == "running"
+    assert status_running["runner2"] == "running"
+
+    # Simulate one runner stopping normally
+    runner1_instance = orchestrator.runner_instances["runner1"]
+    # runner1_instance.stop()  # Orchestrator stop calls this, here we simulate direct stop of runner
+    # To accurately simulate, we need the runner's thread to finish
+    runner1_instance._stop_event.set()  # Signal the mock runner's loop to stop
+    time.sleep(0.1)  # Give mock runner time to process stop event
+    # Manually make its thread appear dead for status check, as orchestrator.stop() isn't called to join it.
+    # This is a bit of a hack for testing status mid-flight without full orchestrator stop
+    runner1_thread = orchestrator.runner_threads.get("runner1")
+    if runner1_thread and runner1_thread.is_alive():
+        runner1_thread.join(timeout=0.2)  # Try to join it, increased timeout
+    # In a real scenario, the thread would exit, and is_alive would be false.
+    # The mock runner's is_alive() should reflect it stopped.
+    # runner1_instance.is_alive.return_value = False  # Done by mock _start_behavior normally
+
+    status_one_stopped = orchestrator.status()
+    # The mock runner's start loop sets is_alive to False when _stop_event is set.
+    # The orchestrator.status() checks thread.is_alive().
+    # If the thread for runner1 truly exited, status becomes "crashed_or_exited" or "stopped"
+    # depending on if instance._stop_event was set.
+    assert status_one_stopped["runner1"] == "stopped"  # Since its _stop_event is set
+    assert status_one_stopped["runner2"] == "running"
+
+    # Simulate one runner crashing (thread dies, but _stop_event not necessarily set by runner itself)
+    runner2_instance = orchestrator.runner_instances["runner2"]
+    runner2_thread = orchestrator.runner_threads["runner2"]
+    # To simulate a crash where the thread dies unexpectedly:
+    # We can't just kill the thread. We make its is_alive() return False.
+    # The mock _start_behavior needs to be told to simulate a crash for this runner.
+    # This requires a more sophisticated mock setup or direct manipulation.
+    # For now, we'll assume watchdog hasn't run yet. The thread is dead.
+    # Let's mock the thread.is_alive() directly for this test case if possible,
+    # or ensure our mock runner can simulate this.
+    # The current mock can simulate crash if `_crash_mid_run` is set on instance.
+    runner2_instance._crash_mid_run = True
+    # Give it a moment for the mock runner's loop to pick up the crash flag.
+    # The mock will then set its own is_alive to False.
+    # We also need the actual thread object to appear dead.
+    # This is hard; we rely on the mock framework.
+    # The watchdog loop in Orchestrator should pick this up.
+    # For status(), it checks thread.is_alive().
+    # For a simple status check without involving watchdog restart yet:
+    if runner2_thread and hasattr(
+        runner2_thread, "is_alive"
+    ):  # Ensure thread object exists
+        with patch.object(runner2_thread, "is_alive", return_value=False):
+            status_one_crashed = orchestrator.status()
+            # runner2_instance._stop_event is NOT set, but thread is dead
+            assert status_one_crashed.get("runner2") == "crashed_or_exited", (
+                f"Expected runner2 to be crashed_or_exited, got {status_one_crashed.get('runner2')}"
+            )
+    else:
+        # If thread doesn't exist (e.g. launch failed or already cleaned), this path might need different assertion
+        # For this specific test flow, we expect runner2_thread to exist.
+        pass  # Or raise an error if runner2_thread is unexpectedly None
+
+    orchestrator.stop()  # Cleanup
+
+
+@pytest.mark.parametrize("restart_flag_in_config", [True, False])
+def test_orchestrator_crash_handling(
+    sample_orchestrator_config_file,
+    mock_liverunner_class,
+    sample_orchestrator_config_dict,
+    restart_flag_in_config,
+    mocker,
+    tmp_path,
+):
+    """Test runner crash handling with and without restart_on_crash flag."""
+    config_dict = sample_orchestrator_config_dict.copy()
+    config_dict["restart_on_crash"] = restart_flag_in_config
+    # Use only one runner for simplicity in this test
+    config_dict["runners"] = [sample_orchestrator_config_dict["runners"][0].copy()]
+    crashing_runner_name = config_dict["runners"][0]["name"]
+
+    # Create a new config file for this specific test scenario
+    specific_config_file = (
+        tmp_path / f"orchestrator_crash_test_{restart_flag_in_config}.yaml"
+    )
+    with open(specific_config_file, "w") as f:
+        yaml.dump(config_dict, f)
+
+    # ---- TEST DEBUG: Verify config ----
+    with open(specific_config_file, "r") as f_check:
+        check_data = yaml.safe_load(f_check)
+        print(
+            f"TEST DEBUG (file check): For restart_flag_in_config={restart_flag_in_config}, YAML has restart_on_crash = {check_data.get('restart_on_crash')}"
+        )
+    # ---- END TEST DEBUG ----
+
+    orchestrator = Orchestrator(config_path=str(specific_config_file))
+    # ---- TEST DEBUG: Verify orchestrator config ----
+    print(
+        f"TEST DEBUG (orchestrator instance): For restart_flag_in_config={restart_flag_in_config}, orchestrator.config.restart_on_crash = {orchestrator.config.restart_on_crash}"
+    )
+    # ---- END TEST DEBUG ----
+
+    orchestrator.start()  # This will create the LiveRunner instance and its thread will call start()
+
+    # Ensure the runner instance is created and its _start_behavior has been entered
+    time.sleep(0.05)  # Brief sleep to allow instance creation by orchestrator
+    assert crashing_runner_name in orchestrator.runner_instances, (
+        "Crashing runner instance not found in orchestrator after start"
+    )
+    crashing_runner_instance = orchestrator.runner_instances[crashing_runner_name]
+
+    orchestrator.logger.info(
+        f"Test: Waiting for {crashing_runner_name} _start_behavior to enter (_actually_started_event)... Thread: {threading.current_thread().name}"
+    )
+    started_event_fired = crashing_runner_instance._actually_started_event.wait(
+        timeout=2.0
+    )  # Increased timeout
+    assert started_event_fired, (
+        f"_actually_started_event for {crashing_runner_name} did not fire in time."
+    )
+    orchestrator.logger.info(
+        f"Test: {crashing_runner_name} _actually_started_event fired. Setting _crash_after_start=True."
+    )
+
+    crashing_runner_instance._crash_after_start = True
+    orchestrator.logger.info(
+        f"Test: {crashing_runner_name} _crash_after_start set to True. Setting _test_has_set_crash_flag_event."
+    )
+    crashing_runner_instance._test_has_set_crash_flag_event.set()  # Signal _start_behavior to proceed
+
+    crashing_thread_object = orchestrator.runner_threads.get(crashing_runner_name)
+    assert crashing_thread_object is not None, (
+        f"Thread for {crashing_runner_name} not found after start."
+    )
+
+    orchestrator.logger.info(
+        f"Test: {crashing_runner_name} configured to crash. Joining thread with longer timeout... Thread: {threading.current_thread().name}"
+    )
+    crashing_thread_object.join(
+        timeout=2.0
+    )  # DRASTICALLY INCREASED TIMEOUT TO 2 SECONDS
+
+    assert not crashing_thread_object.is_alive(), (
+        f"Crashing thread {crashing_runner_name} (state: {crashing_thread_object.is_alive()}) did not terminate after simulated crash and 2s join."
+    )
+
+    orchestrator.logger.info(
+        f"Test: Thread {crashing_runner_name} confirmed terminated. Waiting for watchdog (real 5s sleep cycle)..."
+    )
+
+    if restart_flag_in_config:
+        orchestrator.logger.info("Test: Expecting restart. Watchdog will take ~5s.")
+        time.sleep(
+            5.5
+        )  # Wait for one full watchdog cycle (5s) + buffer for restart action
+        assert mock_liverunner_class.call_count >= 2, (
+            f"LiveRunner class should have been called for initial start and restart. Got {mock_liverunner_class.call_count} calls."
+        )
+
+        # Check that a new instance was created and its start was called
+        # This is tricky because the instance is replaced. We check call_count on the class mock.
+        # And that eventually, a runner is running again (or attempted to start)
+        # The specific new instance's start method should have been called.
+        # We can check the call_args_list of the main mock_liverunner_class
+
+        # After restart, there should be a running instance again
+        # The name of the thread might be the same if Python reuses thread names quickly,
+        # or it might be new. Status should eventually show running.
+        current_status = orchestrator.status()
+        assert current_status.get(crashing_runner_name) == "running", (
+            f"Runner {crashing_runner_name} not running after expected restart"
+        )
+
+        # Verify that the *start method* of one of the *instances* was called more than once if we could track it,
+        # or at least that the latest instance has its start called.
+        # mock_liverunner_class.return_value.start.call_count should be 1 for the *latest* instance.
+        # Let's check the call count on the start mock of the *current* instance for the runner.
+        # This is complex because the instance in orchestrator.runner_instances is replaced.
+        # The easiest is to verify the LiveRunner class was instantiated again (checked by call_count >=2)
+        # and the status is running.
+
+    else:
+        orchestrator.logger.info(
+            f"Test: Expecting NO restart. Watchdog will clean up {crashing_runner_name}."
+        )
+
+        max_wait_watchdog_cleanup = (
+            7.0  # Max time to wait for watchdog to remove the runner
+        )
+        poll_interval = 0.1
+        elapsed_wait = 0.0
+
+        # Wait for the watchdog to remove the thread from its tracking
+        while (
+            crashing_runner_name in orchestrator.runner_threads
+            and elapsed_wait < max_wait_watchdog_cleanup
+        ):
+            time.sleep(poll_interval)
+            elapsed_wait += poll_interval
+        orchestrator.logger.info(
+            f"Test: Polled for {crashing_runner_name} removal from runner_threads for {elapsed_wait:.2f}s. Found: {crashing_runner_name not in orchestrator.runner_threads}"
+        )
+
+        # Optionally, also wait for instance removal if necessary for the status logic, though thread removal is key for this specific assert
+        elapsed_wait_instance = 0.0
+        while (
+            crashing_runner_name in orchestrator.runner_instances
+            and elapsed_wait_instance < (max_wait_watchdog_cleanup - elapsed_wait)
+        ):
+            time.sleep(poll_interval)
+            elapsed_wait_instance += poll_interval
+        orchestrator.logger.info(
+            f"Test: Polled for {crashing_runner_name} removal from runner_instances for {elapsed_wait_instance:.2f}s. Found: {crashing_runner_name not in orchestrator.runner_instances}"
+        )
+
+        if crashing_runner_name in orchestrator.runner_threads:
+            orchestrator.logger.error(
+                f"Test FAIL HINT: {crashing_runner_name} STUCK in orchestrator.runner_threads after {max_wait_watchdog_cleanup}s."
+            )
+        if crashing_runner_name in orchestrator.runner_instances:
+            orchestrator.logger.error(
+                f"Test FAIL HINT: {crashing_runner_name} STUCK in orchestrator.runner_instances after {max_wait_watchdog_cleanup}s."
+            )
+
+        assert mock_liverunner_class.call_count == 1, (
+            f"LiveRunner class should only be called for initial start, no restart. Got {mock_liverunner_class.call_count} calls."
+        )
+
+        current_status = orchestrator.status()
+        expected_status_after_crash_no_restart = "pending_or_failed_to_start"
+        actual_status = current_status.get(crashing_runner_name)
+        assert actual_status == expected_status_after_crash_no_restart, (
+            f"Runner {crashing_runner_name} status is {actual_status}, expected {expected_status_after_crash_no_restart} after crash and no restart (waited for cleanup)."
+        )
+        assert crashing_runner_name not in orchestrator.runner_threads, (
+            f"{crashing_runner_name} should NOT be in runner_threads after watchdog cleanup."
+        )
+        assert crashing_runner_name not in orchestrator.runner_instances, (
+            f"{crashing_runner_name} should NOT be in runner_instances after watchdog cleanup."
+        )
+
+    orchestrator.stop()  # Cleanup

@@ -1,0 +1,7 @@
+runners:
+  - name: mes_scalp
+    config: configs/live_tradovate.yaml      # points to existing LiveRunner YAML
+  - name: etf_momo
+    config: configs/live_sample.yaml
+log_level: INFO
+restart_on_crash: true      # auto-restart flag

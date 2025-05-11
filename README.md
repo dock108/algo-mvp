@@ -130,6 +130,43 @@ Live trading activity (orders, trades, equity snapshots, daily summaries) is log
 - **Brokerage:** The custom `AlpacaBroker` interacts with the Alpaca Trading API via `alpaca-py`.
 - **Risk:** Live trading involves real financial risk. Use with extreme caution, especially with real money (`--live` flag). Start with paper trading (`--paper`) extensively.
 
+## Running Multiple Strategies (Orchestrator)
+
+This project includes an orchestrator module to launch and manage multiple `LiveRunner` instances simultaneously, each potentially running a different strategy or configuration. This is useful for deploying several trading bots from a single control point.
+
+### Configuration
+
+The orchestrator is configured using a YAML manifest file. A sample manifest is provided in `configs/orchestrator_sample.yaml`.
+
+**Example `configs/orchestrator_sample.yaml`:**
+```yaml
+runners:
+  - name: mes_scalp_bot
+    config: configs/live_tradovate_mes.yaml  # Path to a LiveRunner YAML config
+  - name: spy_momo_bot
+    config: configs/live_alpaca_spy.yaml    # Path to another LiveRunner YAML config
+log_level: INFO  # Overall log level for the orchestrator (DEBUG, INFO, WARNING, ERROR)
+restart_on_crash: true  # If true, automatically restarts a runner if it crashes
+```
+
+Each item under `runners` defines a `LiveRunner` instance to be managed:
+- `name`: A unique name for this runner instance (used for logging and status display).
+- `config`: The file path to the standard YAML configuration file for that `LiveRunner` (e.g., `configs/live_sample.yaml`, `configs/live_spy.yaml`).
+
+### CLI Usage
+
+To start the orchestrator and launch all configured runners, use the following command:
+
+```bash
+python -m algo_mvp.orchestrator --config configs/orchestrator_sample.yaml
+```
+
+**Optional flags:**
+- `--verbose`: Enable verbose logging for the orchestrator and potentially its runners (sets orchestrator log level to DEBUG, overriding the YAML `log_level`).
+- `--no-restart`: Disable automatic restarting of crashed runners, even if `restart_on_crash: true` is set in the YAML manifest.
+
+The CLI will display a live table with the status of each runner, refreshing periodically. Press `Ctrl+C` to gracefully shut down the orchestrator and all its runners.
+
 ## Back-testing
 
 This project includes a vectorbt-powered backtesting engine that can run single or grid parameter sweeps based on YAML configuration files.

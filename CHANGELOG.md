@@ -128,3 +128,14 @@
 ### Added
 - TradovateBrokerAdapter (demo) with REST + WebSocket support.
 - Fixed & expanded data/tradovate tests.
+
+## [0.7.0] – 2025-05-11
+### Added
+- Orchestrator module (`algo_mvp.orchestrator`) to launch and manage multiple LiveRunner instances based on a YAML manifest.
+- CLI for the orchestrator: `python -m algo_mvp.orchestrator --config <manifest_path> [--verbose] [--no-restart]`.
+- Rich-based live status table in the CLI displaying runner states, updated periodically.
+- Graceful shutdown (Ctrl-C) for the orchestrator CLI.
+- Automatic restart of crashed runners (configurable via YAML and CLI).
+- Pydantic models for orchestrator configuration validation.
+- Unit tests for the orchestrator module with mocked LiveRunners, covering start, stop, status, and crash handling (restart true/false).
+- Sample orchestrator manifest `configs/orchestrator_sample.yaml`.
