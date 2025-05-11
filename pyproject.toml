@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "algo-mvp"
-version = "0.9.1"
+version = "0.10.0"
 description = "Algorithmic trading framework MVP"
 authors = ["Dock108 <michael@dock108.io>"]
 readme = "README.md"
@@ -10,7 +10,8 @@ packages = [{include = "algo_mvp", from = "src"}]
 python = ">=3.10,<4.0"
 backtrader = "^1.9.78.123"
 vectorbt = "^0.26.2"
-numpy = ">=1.23.0"
+numpy = "^1.26"
+pandas = "^2.2"
 streamlit = "^1.45.0"
 # alpaca-trade-api = "^3.2.0" # Replaced by alpaca-py
 sqlalchemy = "^2.0"

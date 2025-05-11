@@ -184,3 +184,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LiveRunner now logs to DB automatically.
 - Real-time queryable P&L history in SQLite while trading is live.
 - Comprehensive unit tests for the writer and LiveRunner integration.
+
+## [0.10.0] – 2025-05-11
+### Added
+- Analytics API for P&L curves, trade logs, summary stats, drawdowns, open positions.

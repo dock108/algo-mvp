@@ -318,3 +318,31 @@ Backtest results are stored in the `backtests/` directory, organized by strategy
 - `equity_{run_id}.csv`: Equity curve for each run
 - `plot_{run_id}.html`: Interactive vectorbt plot for each run
 - A copy of the configuration file used for the backtest
+
+## Analytics API
+
+The project includes a comprehensive Analytics API for analyzing trading performance from the SQLite database. The API provides easy-to-consume Pandas DataFrames and pre-calculated statistics that can be used in dashboards and reports.
+
+```python
+from algo_mvp.analytics import AnalyticsAPI
+
+# Create an API instance (uses default database connection)
+api = AnalyticsAPI()
+
+# Get equity curve resampled to 1-min frequency
+equity_df = api.pnl_curve(start='2025-05-01', end='2025-05-10')
+
+# Get detailed trade log with P&L per round-trip
+trades_df = api.trade_log(symbol='AAPL')  # Filter by symbol (optional)
+
+# Get performance statistics
+stats = api.summary_stats(period='MTD')  # Options: 'all', 'YTD', 'MTD', 'WTD', 'today'
+
+# Get drawdown series
+drawdowns = api.drawdown_series()
+
+# Get currently open positions
+positions = api.open_positions()
+```
+
+The Analytics API is designed to be the single source of truth for dashboard and reporting tools, eliminating the need for direct SQL queries.
