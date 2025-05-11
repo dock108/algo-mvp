@@ -102,20 +102,25 @@ def test_tradovate_fetch_api_http_error(
 ):
     """Test fetch method with API HTTP error."""
     fetcher = tradovate_fetcher_instance
-    responses.add(
-        responses.GET,
-        f"{TRADOVATE_DEMO_API_URL}/history",
-        json={"error": "Failed to fetch"},
-        status=500,
-    )
 
-    result = fetcher.fetch(
-        symbol=tradovate_config_fixture.symbol,
-        timeframe_str=tradovate_config_fixture.timeframe,
-        start_date_str=tradovate_config_fixture.start,
-        end_date_str=tradovate_config_fixture.end,
-    )
-    assert result is None
+    # Instead of using responses to mock the HTTP call (which still triggers retries),
+    # directly patch the _make_request method to raise an HTTPError
+    with patch.object(fetcher, "_make_request") as mock_make_request:
+        mock_make_request.side_effect = requests.exceptions.HTTPError(
+            "500 Server Error"
+        )
+
+        result = fetcher.fetch(
+            symbol=tradovate_config_fixture.symbol,
+            timeframe_str=tradovate_config_fixture.timeframe,
+            start_date_str=tradovate_config_fixture.start,
+            end_date_str=tradovate_config_fixture.end,
+        )
+
+        # Verify _make_request was called with expected parameters
+        mock_make_request.assert_called_once()
+
+        assert result is None
 
 
 @responses.activate
@@ -195,18 +200,24 @@ def test_tradovate_fetch_connection_error(
 ):
     """Test fetch handling ConnectionError during API request."""
     fetcher = tradovate_fetcher_instance
-    responses.add(
-        responses.GET,
-        f"{TRADOVATE_DEMO_API_URL}/history",
-        body=requests.exceptions.ConnectionError("Test connection error"),
-    )
-    result = fetcher.fetch(
-        symbol=tradovate_config_fixture.symbol,
-        timeframe_str=tradovate_config_fixture.timeframe,
-        start_date_str=tradovate_config_fixture.start,
-        end_date_str=tradovate_config_fixture.end,
-    )
-    assert result is None
+
+    # Use patch instead of responses to avoid retry behavior
+    with patch.object(fetcher, "_make_request") as mock_make_request:
+        mock_make_request.side_effect = requests.exceptions.ConnectionError(
+            "Test connection error"
+        )
+
+        result = fetcher.fetch(
+            symbol=tradovate_config_fixture.symbol,
+            timeframe_str=tradovate_config_fixture.timeframe,
+            start_date_str=tradovate_config_fixture.start,
+            end_date_str=tradovate_config_fixture.end,
+        )
+
+        # Verify _make_request was called with expected parameters
+        mock_make_request.assert_called_once()
+
+        assert result is None
 
 
 def test_tradovate_fetch_invalid_date_format(

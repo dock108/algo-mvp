@@ -156,8 +156,10 @@ class Orchestrator:
                     continue
 
                 if not thread.is_alive():
+                    # Check the actual restart_on_crash setting from the config
+                    restart_flag = self.config.restart_on_crash
                     self.logger.warning(
-                        f"WATCHDOG: Runner {runner_name} thread DIED. Configured restart_on_crash: {self.config.restart_on_crash}"
+                        f"WATCHDOG: Runner {runner_name} thread DIED. Configured restart_on_crash: {restart_flag}"
                     )
 
                     self.logger.info(
@@ -170,7 +172,7 @@ class Orchestrator:
                         f"WATCHDOG: Post-delete check for '{runner_name}' in runner_threads. Exists: {runner_name in self.runner_threads}"
                     )
 
-                    if self.config.restart_on_crash and not self._stop_event.is_set():
+                    if restart_flag and not self._stop_event.is_set():
                         self.logger.info(
                             f"WATCHDOG: Restarting runner {runner_name} due to crash/exit."
                         )
@@ -194,7 +196,7 @@ class Orchestrator:
                             self.logger.error(
                                 f"WATCHDOG: Could not find config for runner {runner_name} to restart."
                             )
-                    elif not self.config.restart_on_crash:
+                    elif not restart_flag:
                         self.logger.info(
                             f"WATCHDOG: Not restarting {runner_name} as restart_on_crash is False."
                         )
@@ -255,77 +257,39 @@ class Orchestrator:
         self.logger.info("Orchestrator stopped.")
 
     def status(self) -> Dict[str, str]:
-        statuses = {}
-        # Initialize status from config to catch runners that never started
-        for r_conf in self.config.runners:
-            statuses[r_conf.name] = "pending_or_not_configured"
-
-        # Update status for runners that have/had threads
-        for name, thread in self.runner_threads.items():  # This uses the live threads
-            runner_instance = self.runner_instances.get(name)
-            if thread.is_alive():
-                statuses[name] = "running"
-            elif (
-                runner_instance and runner_instance._stop_event.is_set()
-            ):  # Was stopped intentionally
-                statuses[name] = "stopped"
-            else:  # Died or exited without intentional stop signal known to orchestrator here
-                statuses[name] = "crashed_or_exited"
-
-        # For runners in config but not in runner_threads (e.g., launch failed, or already cleaned up post-crash without restart)
-        for r_conf in self.config.runners:
-            if r_conf.name not in self.runner_threads:  # If no active thread
-                if r_conf.name in self.runner_instances:  # But we have an instance
-                    # This means it might have been stopped and thread joined, or crashed and not restarted
-                    if self.runner_instances[r_conf.name]._stop_event.is_set():
-                        statuses[r_conf.name] = "stopped"
-                        # else:
-                        # It might have crashed and been removed from runner_threads by watchdog
-                        # If restart is off, it stays crashed. If restart is on, it should have been restarted or is in process.
-                        # The "crashed_or_exited" from above loop might catch this if thread was briefly there.
-                        # This part can be tricky to get perfect without more state.
-                        # For now, if no thread, and not explicitly stopped, and was an instance -> assume issue
-                        # However, the previous loop already handles threads that *were* there.
-                        # This is more for runners that *never* got a thread or were cleaned up *completely*.
-                        pass  # Let "pending_or_not_configured" or "stopped" (if set by instance check) stand
-
-                elif (
-                    statuses[r_conf.name] == "pending_or_not_configured"
-                ):  # Truly never made it or fully gone
-                    # Could refine this to "failed_to_start" if we track launch attempts better
-                    pass
-
-        # Ensure all configured runners have some status
-        # current_runner_names = set(self.runner_instances.keys()) # This variable is unused and will be removed.
-        for r_conf in self.config.runners:
-            if r_conf.name not in statuses:  # Should not happen with initial population
-                statuses[r_conf.name] = "unknown"  # Fallback
-            # If a runner was in config, but no instance and no thread, it's likely "pending_or_failed_to_start"
-            # or "crashed_and_cleaned" if restart is off.
-            # The logic is getting complex; let's simplify.
-
-        # Simplified status:
-        # 1. Iterate through configured runners.
-        # 2. Check thread status if a thread exists.
-        # 3. Check instance's stop event if instance exists.
-
+        # Initialize status for all configured runners
         final_statuses: Dict[str, str] = {}
         for r_config in self.config.runners:
             runner_name = r_config.name
             thread = self.runner_threads.get(runner_name)
             instance = self.runner_instances.get(runner_name)
 
+            # Check if the thread and instance exist and their states
             if thread and thread.is_alive():
+                # Thread is alive, runner is running
                 final_statuses[runner_name] = "running"
-            elif instance and instance._stop_event.is_set():  # Intentionally stopped
+            elif instance and instance._stop_event.is_set():
+                # Stop event was set, runner was intentionally stopped
                 final_statuses[runner_name] = "stopped"
-            elif thread and not thread.is_alive():  # Thread existed but died
+            elif thread and not thread.is_alive():
+                # Thread existed but died
                 final_statuses[runner_name] = "crashed_or_exited"
-            elif (
-                instance
-            ):  # Instance exists, but no thread or thread died, and not cleanly stopped
-                # This could be a state where it crashed and the thread is gone.
-                final_statuses[runner_name] = "error_or_crashed"
-            else:  # No instance, no thread. Either never started, or failed very early.
+            elif instance:
+                # Instance exists but thread is gone or never created
+                # Check if is_alive on the runner instance (could be unreliable)
+                if hasattr(instance, "is_alive") and callable(instance.is_alive):
+                    if instance.is_alive():
+                        final_statuses[runner_name] = "running"
+                    else:
+                        # If is_alive returns False and stop_event is set, it's stopped
+                        if instance._stop_event.is_set():
+                            final_statuses[runner_name] = "stopped"
+                        else:
+                            final_statuses[runner_name] = "error_or_crashed"
+                else:
+                    final_statuses[runner_name] = "error_or_crashed"
+            else:
+                # No instance, no thread
                 final_statuses[runner_name] = "pending_or_failed_to_start"
+
         return final_statuses
