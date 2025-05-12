@@ -717,3 +717,190 @@ def test_orchestrator_reload_updates_config(
         runner.stop()
     orchestrator.runner_instances.clear()
     orchestrator.runner_threads.clear()
+
+
+def test_orchestrator_reload_with_db_writing(
+    sample_orchestrator_config_file,
+    mock_liverunner_class,
+    sample_orchestrator_config_dict,
+    mocker,
+    tmp_path,
+):
+    """Test that reload method properly logs to the database."""
+    # Create a mock DB writer
+    mock_db_writer = mocker.MagicMock()
+    mocker.patch(
+        "algo_mvp.orchestrator.manager.get_writer", return_value=mock_db_writer
+    )
+
+    # Patch the watchdog loop to not block
+    mocker.patch(
+        "algo_mvp.orchestrator.manager.Orchestrator._watchdog_loop", return_value=None
+    )
+
+    # Initialize orchestrator
+    orchestrator = Orchestrator(config_path=str(sample_orchestrator_config_file))
+
+    # Test successful reload
+    orchestrator.reload(str(sample_orchestrator_config_file))
+
+    # Verify DB writer was called with success message
+    mock_db_writer.log_message.assert_any_call(
+        "INFO",
+        mocker.ANY,  # Don't test exact message text
+    )
+
+    # Reset the mock for testing error case
+    mock_db_writer.reset_mock()
+
+    # Create an invalid config file for testing error handling
+    invalid_config_file = tmp_path / "invalid_config.yaml"
+    with open(invalid_config_file, "w") as f:
+        f.write("invalid: yaml: content: - [")  # Invalid YAML syntax
+
+    # Test reload with invalid config
+    with pytest.raises(Exception):  # Should raise some kind of exception
+        orchestrator.reload(str(invalid_config_file))
+
+    # Verify DB writer was called with error message
+    mock_db_writer.log_message.assert_any_call(
+        "ERROR",
+        mocker.ANY,  # Don't test exact message text
+    )
+
+
+def test_orchestrator_watchdog_loop_custom(
+    sample_orchestrator_config_file,
+    mock_liverunner_class,
+    mocker,
+):
+    """Test the watchdog functionality by implementing a custom version."""
+    # Mock DB writer
+    mocker.patch("algo_mvp.orchestrator.manager.get_writer")
+
+    # Initialize orchestrator
+    orchestrator = Orchestrator(config_path=str(sample_orchestrator_config_file))
+
+    # Patch the sleep function to avoid timeout
+    mocker.patch("time.sleep")
+
+    # Create a simpler custom watchdog implementation that we can test
+    def custom_watchdog():
+        """A simplified version of the _watchdog_loop that we can control."""
+        # Get the runner name to simulate a crash for
+        runner_name = orchestrator.config.runners[0].name
+
+        # Check if the runner thread is in the dict
+        if runner_name in orchestrator.runner_threads:
+            # Simulate a dead thread that needs cleanup
+            thread = orchestrator.runner_threads[runner_name]
+            if thread is None or not thread.is_alive():
+                # Log that we're cleaning up a dead thread
+                orchestrator.logger.warning(
+                    f"WATCHDOG: Runner {runner_name} thread DIED. Cleaning up."
+                )
+
+                # Delete the thread reference
+                del orchestrator.runner_threads[runner_name]
+
+                # Check if runner should be restarted
+                if (
+                    orchestrator.config.restart_on_crash
+                    and not orchestrator._stop_event.is_set()
+                ):
+                    # Find the runner config
+                    runner_conf_obj = next(
+                        (
+                            r
+                            for r in orchestrator.config.runners
+                            if r.name == runner_name
+                        ),
+                        None,
+                    )
+                    if runner_conf_obj:
+                        # Clean up old instance if it exists
+                        if runner_name in orchestrator.runner_instances:
+                            del orchestrator.runner_instances[runner_name]
+                        # Launch a new runner
+                        orchestrator._launch_runner(runner_conf_obj)
+
+    # Install custom watchdog
+    orchestrator._watchdog_loop = custom_watchdog
+
+    # Start the orchestrator (without automatic watchdog)
+    for runner_conf in orchestrator.config.runners:
+        orchestrator._launch_runner(runner_conf)
+
+    # Wait for threads to initialize
+    time.sleep(0.2)
+
+    # Verify we have the expected runner
+    runner_name = orchestrator.config.runners[0].name
+    assert runner_name in orchestrator.runner_threads
+
+    # Setup the test - set the thread to None to simulate a dead thread
+    orchestrator.runner_threads[runner_name] = None
+
+    # Get reference to the current instance
+    original_instance = orchestrator.runner_instances[runner_name]
+
+    # Run our custom watchdog
+    custom_watchdog()
+
+    # Verify the runner was cleaned up and restarted
+    assert runner_name in orchestrator.runner_threads  # Should have a new thread
+    assert orchestrator.runner_threads[runner_name] is not None
+    assert orchestrator.runner_instances[runner_name] != original_instance
+
+    # Clean up
+    orchestrator.stop()
+
+
+def test_orchestrator_status_method(
+    sample_orchestrator_config_file,
+    mock_liverunner_class,
+    mocker,
+):
+    """Test the status method of the orchestrator."""
+    # Initialize orchestrator
+    orchestrator = Orchestrator(config_path=str(sample_orchestrator_config_file))
+
+    # Test status before any runners are started
+    status_before_start = orchestrator.status()
+    for runner_name, status in status_before_start.items():
+        assert status == "pending_or_failed_to_start"
+
+    # Start a runner manually
+    runner_conf = orchestrator.config.runners[0]
+    orchestrator._launch_runner(runner_conf)
+
+    # Get the mock runner instance and thread
+    runner_name = runner_conf.name
+    runner_instance = orchestrator.runner_instances[runner_name]
+    runner_thread = orchestrator.runner_threads[runner_name]
+
+    # Mark the test as ready
+    runner_instance._test_has_set_crash_flag_event.set()
+
+    # Make sure is_alive is properly returning True
+    runner_instance.is_alive.return_value = True
+
+    # Verify runner is shown as running in status
+    status_running = orchestrator.status()
+    assert status_running[runner_name] == "running"
+
+    # Now simulate a clean stop by:
+    # 1. Setting _stop_event to True
+    # 2. Making instance.is_alive return False
+    # 3. Making thread.is_alive return False
+    runner_instance._stop_event.set()
+    runner_instance.is_alive.return_value = False
+
+    # The key issue: we need to mock the thread's is_alive method too!
+    with patch.object(runner_thread, "is_alive", return_value=False):
+        # Check status again - should show stopped now
+        status_stopped = orchestrator.status()
+        assert status_stopped[runner_name] == "stopped"
+
+    # Cleanup
+    orchestrator.stop()

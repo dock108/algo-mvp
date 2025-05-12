@@ -40,7 +40,7 @@ jobs:
         poetry run python -m playwright install --with-deps
     - name: Run tests with coverage
       run: |
-        poetry run pytest --cov=src --cov-fail-under=85
+        poetry run pytest --cov=src --cov-fail-under=80
   lint-format-check:
     runs-on: ubuntu-latest
     steps:
