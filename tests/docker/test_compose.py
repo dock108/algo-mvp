@@ -11,6 +11,7 @@ MAX_WAIT_SECONDS = 60
 HEALTH_CHECK_INTERVAL = 5  # seconds
 
 
+@pytest.mark.timeout(90)
 @pytest.mark.skipif(
     os.getenv("CI_DOCKER") != "true",
     reason="Docker tests are skipped unless CI_DOCKER is true (requires Docker daemon)",
