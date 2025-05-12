@@ -4,7 +4,8 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     ALGO_DB_URL=sqlite:///data/algo.db \
     SUPERVISOR_TOKEN=changeme \
-    DASHBOARD_PASSWORD=password
+    DASHBOARD_PASSWORD=password \
+    PIP_NO_CACHE_DIR=1
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential git && \

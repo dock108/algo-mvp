@@ -12,6 +12,12 @@ services:
     restart: unless-stopped
     environment:
       - SUPERVISOR_TOKEN=${SUPERVISOR_TOKEN:-changeme}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s # How often to run the check
+      timeout: 10s  # How long to wait for a response
+      retries: 5    # How many times to retry before marking as unhealthy
+      start_period: 30s # How long to wait before starting health checks
 
   dashboard:
     build:
@@ -20,7 +26,8 @@ services:
     container_name: algo-dashboard
     command: python -m algo_mvp.dashboard
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy # Wait for backend to be healthy
     ports:
       - "8501:8501"
     restart: unless-stopped

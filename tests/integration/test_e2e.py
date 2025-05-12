@@ -108,13 +108,15 @@ class TrackedMockBrokerAdapter(MockBrokerAdapter):
 
 @pytest.fixture
 def memory_engine():
-    """Create an in-memory SQLite engine for testing."""
-    # Create engine with thread safety for SQLite
+    """Create an in-memory SQLite engine for testing, ensuring it's shared."""
+    # Using "file:<databasename>?mode=memory&cache=shared&uri=true" ensures the in-memory DB is shared
+    # across different connections from the same engine/process.
     engine = create_engine(
-        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+        "sqlite:///file:e2e_test_db?mode=memory&cache=shared&uri=true",
+        connect_args={"check_same_thread": False},
     )
 
-    # Enable SQLite foreign keys
+    # Enable SQLite foreign keys (optional, but good practice if you use them)
     with engine.connect() as conn:
         conn.execute(text("PRAGMA foreign_keys=ON"))
         conn.commit()
