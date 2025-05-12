@@ -19,6 +19,37 @@ Lean backtest + paper-trade stack for Mike (Dock108).
     poetry run streamlit hello
     ```
 
+## Docker Quick-Start
+
+To run the entire stack (supervisor, orchestrator, runners, dashboard, and database) using Docker Compose:
+
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/your-username/algo-mvp.git
+    cd algo-mvp
+    ```
+
+2.  **Build and run the services:**
+    ```bash
+    docker compose up --build
+    ```
+    This command will build the Docker image and start all services. The backend (supervisor and orchestrator) will be available on port `8000`, and the dashboard will be on port `8501`.
+
+3.  **Access the dashboard:**
+    Open your browser and navigate to `http://localhost:8501`.
+
+### Environment Variable Overrides
+
+You can override the default `SUPERVISOR_TOKEN` and `DASHBOARD_PASSWORD` by setting them in your environment before running `docker compose up` or by creating a `.env` file in the project root:
+
+```env
+# .env
+SUPERVISOR_TOKEN=your_custom_secure_token
+DASHBOARD_PASSWORD=your_strong_dashboard_password
+```
+
+Data will be persisted to the `./data` directory on your host machine.
+
 ## Database setup
 
 The project uses SQLite for storing trade history, logs, and equity snapshots. Alembic is used for database migrations.
