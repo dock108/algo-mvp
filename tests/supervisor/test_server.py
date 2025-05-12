@@ -792,6 +792,151 @@ async def test_action_reload_config_success(mock_orchestrator, app_factory):
     mock_orchestrator.reload.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_watchdog_loop_orchestrator_unhealthy_restart(test_client: TestClient):
+    """Test that the supervisor's watchdog detects and restarts an unhealthy orchestrator."""
+    # Get a reference to the supervisor from the app
+    from algo_mvp.supervisor.server import get_supervisor
+
+    try:
+        supervisor = get_supervisor()
+
+        # Verify supervisor exists
+        assert supervisor is not None
+
+        # Manipulate orchestrator's is_alive method to return False
+        supervisor.orchestrator.is_alive = MagicMock(return_value=False)
+
+        # Let the watchdog run for a short time
+        await asyncio.sleep(1.5)  # Give watchdog time to detect and attempt restart
+
+        # Orchestrator should be marked unhealthy
+        assert supervisor.restart_attempts > 0, "Restart not attempted"
+        assert len(supervisor.last_restart_timestamps) > 0, (
+            "Restart timestamp not recorded"
+        )
+
+        # Check that the orchestrator's stop method was called during restart
+        assert supervisor.orchestrator.stop.call_count > 0, "Stop method not called"
+
+        # Reset orchestrator's is_alive to return True
+        supervisor.orchestrator.is_alive = MagicMock(return_value=True)
+
+    except RuntimeError:
+        pytest.skip("Supervisor not initialized, skipping test")
+
+
+@pytest.mark.asyncio
+async def test_health_supervisor_not_initialized():
+    """Test that health endpoint returns 503 when supervisor is not initialized."""
+    # Use a standalone FastAPI client without setting up a supervisor
+    import algo_mvp.supervisor.server as server_module
+
+    original_supervisor = server_module._supervisor_instance
+
+    try:
+        # Force supervisor to be None
+        server_module._supervisor_instance = None
+
+        # Create a client without calling startup_event
+        client = TestClient(app)
+
+        # Call health endpoint
+        response = client.get("/health")
+
+        # Should return a 503 Service Unavailable
+        assert response.status_code == 503
+
+        # Check response content
+        data = response.json()
+        assert data["status"] == "error"
+        assert any(
+            r["name"] == "supervisor_status" and r["status"] == "uninitialized"
+            for r in data["runners"]
+        )
+
+    finally:
+        # Restore the original supervisor instance
+        server_module._supervisor_instance = original_supervisor
+
+
+@pytest.mark.asyncio
+async def test_health_orchestrator_not_initialized(test_client: TestClient):
+    """Test that health endpoint returns 503 when orchestrator is not initialized in supervisor."""
+    # Get a reference to the supervisor from the app
+    from algo_mvp.supervisor.server import get_supervisor
+
+    try:
+        supervisor = get_supervisor()
+
+        # Save original orchestrator
+        original_orchestrator = supervisor.orchestrator
+
+        # Set orchestrator to None
+        supervisor.orchestrator = None
+
+        # Call health endpoint
+        response = test_client.get("/health")
+
+        # Should return a 503 Service Unavailable
+        assert response.status_code == 503
+
+        # Check response content
+        data = response.json()
+        assert data["status"] == "error"
+        assert any(
+            r["name"] == "orchestrator_status" and r["status"] == "uninitialized"
+            for r in data["runners"]
+        )
+
+    finally:
+        # Restore original orchestrator
+        if supervisor:
+            supervisor.orchestrator = original_orchestrator
+
+
+@pytest.mark.asyncio
+async def test_action_reload_config_yaml_parsing_error(test_client: TestClient):
+    """Test that reload_config endpoint handles YAML parsing errors correctly."""
+    # Get a reference to the supervisor
+    from algo_mvp.supervisor.server import get_supervisor
+
+    try:
+        supervisor = get_supervisor()
+
+        # Save original orchestrator.reload method
+        original_reload = supervisor.orchestrator.reload
+
+        # Mock the reload method to raise a YAML error
+        yaml_error = yaml.YAMLError("Invalid YAML format")
+        supervisor.orchestrator.reload = MagicMock(side_effect=yaml_error)
+
+        # Make the request with token
+        response = test_client.post(
+            "/action/reload_config", params={"token": TEST_SUPERVISOR_TOKEN}
+        )
+
+        # Should return a 500 Server Error
+        assert response.status_code == 500
+
+        # Check error message
+        response_data = response.json()
+        assert "Failed to reload config" in response_data["detail"]
+        assert "YAML parsing error" in response_data["detail"]
+
+        # Verify the mocked reload method was called
+        supervisor.orchestrator.reload.assert_called_once()
+
+    finally:
+        # Restore original method
+        if (
+            supervisor
+            and hasattr(supervisor, "orchestrator")
+            and supervisor.orchestrator
+        ):
+            supervisor.orchestrator.reload = original_reload
+
+
 """
 To run these tests, you would typically use:
 poetry run pytest tests/supervisor/test_server.py

@@ -755,47 +755,43 @@ async def reload_config(
         200: Configuration reloaded successfully
         401: Token required but not provided
         403: Invalid token provided
-        500: Error during reload
+        500: Error during reload (including YAML parsing failures)
     """
     # TODO: Security improvement needed for production deployment
-    # Using query parameters for tokens is not secure as they appear in logs, browser history,
-    # and can be cached. For production, consider:
-    # 1. Using Authorization header: Authorization: Bearer <token>
-    # 2. Using POST JSON body: {"token": "your-token"}
-    # 3. Always use HTTPS in production
-    # This is fine for internal LAN deployments but should be updated for external exposure.
-
+    # This is just a simple token check for now.
     supervisor = get_supervisor()
-
-    # Token validation
-    if supervisor.config.shutdown_token:
+    if (
+        supervisor
+        and hasattr(supervisor, "config")
+        and supervisor.config.shutdown_token
+    ):
         if not token:
-            logger.warning(
-                "/action/reload_config: Attempted access without token when token is required."
-            )
             raise HTTPException(
                 status_code=401, detail="Authentication token required."
             )
         if token != supervisor.config.shutdown_token:
-            logger.warning("/action/reload_config: Invalid token received")
             raise HTTPException(status_code=403, detail="Invalid authentication token.")
 
-    logger.info("/action/reload_config endpoint called")
+    if not supervisor or not supervisor.orchestrator:
+        raise HTTPException(
+            status_code=503, detail="Supervisor or orchestrator not initialized."
+        )
 
     try:
-        # Get the orchestrator
-        if not supervisor.orchestrator:
-            raise HTTPException(status_code=500, detail="Orchestrator not initialized.")
-
-        # Get the manifest path that was used at boot time
-        manifest_path = supervisor.config.orchestrator_config
-
-        # Call the reload method
-        runner_status = supervisor.orchestrator.reload(str(manifest_path))
-
-        return {"reloaded": True, "runners": runner_status}
-    except Exception as e:
-        logger.error(f"Error reloading configuration: {e}", exc_info=True)
+        # Call reload on the orchestrator, which will return status of all runners
+        result = supervisor.orchestrator.reload(
+            manifest_path=supervisor.orchestrator.config_path
+        )
+        return {"status": "reloaded", "runners": result}
+    except yaml.YAMLError as e:
+        # Let YAML parsing errors propagate as 500 errors with details
         raise HTTPException(
-            status_code=500, detail=f"Error reloading configuration: {str(e)}"
+            status_code=500,
+            detail=f"Failed to reload config: YAML parsing error: {str(e)}",
+        )
+    except Exception as e:
+        # Catch other exceptions during reload
+        logger.error(f"Error during config reload: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to reload config: {str(e)}"
         )

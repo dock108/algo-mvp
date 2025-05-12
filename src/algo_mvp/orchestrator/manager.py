@@ -7,6 +7,9 @@ from rich.console import Console
 from rich.logging import RichHandler
 import logging
 
+# Add import for database writer
+from algo_mvp.db import get_writer
+
 
 class RunnerConfig(BaseModel):
     name: str
@@ -308,11 +311,17 @@ class Orchestrator:
 
         Returns:
             Dict[str, str]: Status of each runner after reloading
+
+        Raises:
+            Exception: If YAML parsing or configuration loading fails
         """
         self.logger.info(f"Reloading orchestrator configuration from {manifest_path}")
 
         # First, stop all existing runners
         self.stop()
+
+        # Get DB writer for logging (should never fail)
+        db_writer = get_writer()
 
         # Re-parse the YAML configuration
         try:
@@ -322,8 +331,21 @@ class Orchestrator:
             self.logger.info(
                 f"Configuration reloaded successfully. Starting {len(self.config.runners)} runners."
             )
+
+            # Log success to database (always log)
+            db_writer.log_message(
+                "INFO",
+                f"Orchestrator configuration reloaded successfully with {len(self.config.runners)} runners",
+            )
+
         except Exception as e:
-            self.logger.error(f"Failed to reload configuration: {e}", exc_info=True)
+            error_msg = f"Failed to reload configuration: {e}"
+            self.logger.error(error_msg, exc_info=True)
+
+            # Log failure to database (always log)
+            db_writer.log_message("ERROR", error_msg)
+
+            # Re-raise the exception to propagate to the caller
             raise
 
         # Start the orchestrator with the new configuration
