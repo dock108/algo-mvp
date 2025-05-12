@@ -8,26 +8,29 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential git && \
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential git curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Poetry
-RUN apt-get update && apt-get install -y --no-install-recommends curl && \
-    curl -sSL https://install.python-poetry.org | python3 - --version 1.8.0 && \
+RUN curl -sSL https://install.python-poetry.org | python3 - --version 1.8.0 && \
     rm -rf /var/lib/apt/lists/*
 ENV PATH="/root/.local/bin:$PATH"
 
-# Copy project files and install dependencies
+# Set up working directory
 WORKDIR /app
-COPY pyproject.toml poetry.lock ./
-RUN poetry install --no-dev --only main
 
-# Copy the rest of the application code
+# Copy all project files first
+COPY README.md pyproject.toml poetry.lock ./
 COPY src/ ./src/
 COPY configs/ ./configs/
 COPY .streamlit/ ./.streamlit/
-# Ensure the data directory exists and has correct permissions if needed
+
+# Install dependencies and the package
+RUN poetry config virtualenvs.create false && \
+    poetry install --no-dev --only main
+
+# Ensure the data directory exists and has correct permissions
 RUN mkdir -p /app/data && chmod -R 777 /app/data
 
-# Entrypoint
-ENTRYPOINT ["python", "-m", "algo_mvp.supervisor", "--config", "configs/supervisor_sample.yaml"]
+# Correct Entrypoint to run the FastAPI app using uvicorn
+ENTRYPOINT ["uvicorn", "algo_mvp.supervisor.server:app", "--host", "0.0.0.0", "--port", "8000"]

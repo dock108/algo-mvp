@@ -1,0 +1,62 @@
+# Jinja2 template for a single live paper trading runner configuration.
+# This will be populated by the best parameters found during backtesting.
+
+# Runner specific identifier (e.g., derived from strategy name and parameters)
+runner_id: "paper_runner_{{ strategy_name | default('default') }}_{{ timestamp | default('live') }}"
+
+# General trading settings
+trading_mode: "paper"  # Can be "paper" or "live"
+paper_trade_duration_days: 30
+
+# Exchange and market details
+exchange: "{{ exchange | default('your_default_exchange') }}" # e.g., paper_binance, paper_ftx
+market_symbol: "{{ market_symbol | default('BTC/USD') }}" # e.g., BTC/USD, ETH/USD
+
+# Strategy configuration
+strategy:
+  name: "{{ strategy_name | default('default_strategy') }}"
+
+  # Parameters will be injected here from the best_params.json
+  # Ensure these Jinja2 variables match the keys in your parameters JSON file.
+  parameters:
+    # Example parameters - replace with your actual strategy parameters
+    # simple_moving_average_window: {{ params.sma_window | default(20) }}
+    # rsi_period: {{ params.rsi_period | default(14) }}
+    # stop_loss_percentage: {{ params.stop_loss | default(0.02) }}
+    # take_profit_percentage: {{ params.take_profit | default(0.04) }}
+
+    {% if params %}
+      {% for key, value in params.items() %}
+    {{ key }}: {{ value }}
+      {% endfor %}
+    {% else %}
+    # Fallback or default parameters if 'params' object is not provided
+    # This section might be redundant if your choose_best.py always provides all necessary params.
+    example_param1: "default_value1"
+    example_param2: 100
+    {% endif %}
+
+# Data feed configuration (if applicable for your runner)
+data_feed:
+  type: "{{ data_feed_type | default('websocket') }}" # e.g., websocket, rest_api_poll
+  source: "{{ data_source | default('exchange_stream') }}"
+  # Additional data feed parameters as needed
+
+# Risk management settings
+max_position_size_usd: {{ max_position_usd | default(1000) }}
+max_drawdown_session_percentage: {{ max_drawdown_limit | default(10) }}
+
+# Logging and reporting
+logging_level: "{{ log_level | default('INFO') }}"
+report_frequency_hours: {{ report_interval_hours | default(24) }}
+
+# API credentials (use with caution, prefer environment variables or secrets management)
+# api_credentials:
+#   key: "{{ api_key | default('YOUR_PAPER_API_KEY') }}"
+#   secret: "{{ api_secret | default('YOUR_PAPER_API_SECRET') }}"
+#   passphrase: "{{ api_passphrase | default('') }}" # if required
+
+# Custom fields specific to your live runner
+# custom_settings:
+#   my_custom_runner_flag: true
+#   some_other_value: "{{ custom_value_from_params | default('placeholder') }}"

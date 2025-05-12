@@ -1,0 +1,39 @@
+# Configuration for fetching the last 45 days of market data.
+# Replace with the actual parameters required by your data fetching utility.
+
+# Example structure:
+data_source: "your_preferred_data_provider_api" # e.g., "alpaca", "iex_cloud", "polygon"
+
+# Specify the market or asset class
+market_type: "crypto" # e.g., "stocks", "forex", "crypto"
+
+# List of symbols to fetch data for
+symbols:
+  - "BTC/USD"
+  - "ETH/USD"
+  # Add more symbols as needed
+
+# Timeframe for the data
+# Your fetching utility might have specific ways to define this.
+# This is a conceptual representation.
+time_range:
+  duration_days: 45
+  end_date: "now" # Or a specific date in YYYY-MM-DD format
+
+# Granularity of the data
+data_granularity: "1_minute" # e.g., "1_minute", "5_minute", "1_hour", "1_day"
+
+# Output configuration
+output_format: "csv" # e.g., "csv", "json", "parquet"
+output_path: "./market_data/last_45_days/"
+
+# Optional: API keys or credentials if required by the data source
+# It's often better to manage these via environment variables or a secure secrets manager.
+# credentials:
+#   api_key: "YOUR_API_KEY"
+#   api_secret: "YOUR_API_SECRET"
+
+# Additional parameters specific to your data fetcher
+# custom_params:
+#   some_setting: "value"
+#   another_setting: true

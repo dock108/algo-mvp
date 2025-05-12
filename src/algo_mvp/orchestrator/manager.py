@@ -71,6 +71,7 @@ class Orchestrator:
         self.runner_threads: Dict[str, threading.Thread] = {}
         self._stop_event = threading.Event()
         self._watchdog_thread: Optional[threading.Thread] = None
+        self.last_exception: Optional[Exception] = None
 
         self.console = Console()
         # Configure logging handler for the orchestrator
@@ -86,6 +87,17 @@ class Orchestrator:
         )
         self.logger = logging.getLogger("Orchestrator")
         self.logger.info(f"Initialized with config: {config_path}")
+
+    def _runner_target_wrapper(self, runner: LiveRunner):
+        """Wraps the runner's start method to catch and log exceptions."""
+        try:
+            runner.start()
+        except Exception as e:
+            self.logger.error(
+                f"CRITICAL ERROR in runner {runner.name} thread: {e}", exc_info=True
+            )
+            # Optionally store the exception if needed elsewhere
+            # self.last_runner_exception = e
 
     def _launch_runner(self, runner_conf: RunnerConfig) -> None:
         runner_name = runner_conf.name
@@ -108,7 +120,10 @@ class Orchestrator:
 
             self.runner_instances[runner_name] = runner
 
-            thread = threading.Thread(target=runner.start, name=runner_name)
+            # Use the wrapper for the thread target
+            thread = threading.Thread(
+                target=self._runner_target_wrapper, args=(runner,), name=runner_name
+            )
             thread.daemon = True  # Allow main program to exit
             runner.thread = thread  # Store thread in runner for its is_alive
             self.runner_threads[runner_name] = thread
@@ -118,27 +133,45 @@ class Orchestrator:
             self.logger.error(
                 f"Failed to launch runner {runner_name}: {e}", exc_info=True
             )
+            # Store the exception that occurred during launch
+            self.last_exception = e
             if runner_name in self.runner_instances:
                 del self.runner_instances[
                     runner_name
                 ]  # Clean up if launch failed mid-way
 
     def start(self) -> None:
-        self.logger.info("Starting orchestrator...")
-        self._stop_event.clear()
-        for runner_conf in self.config.runners:
-            self._launch_runner(runner_conf)
+        # Wrap the entire start logic in a try-except block
+        try:
+            self.logger.info("Starting orchestrator...")
+            self._stop_event.clear()
+            self.last_exception = None  # Clear previous exception
+            for runner_conf in self.config.runners:
+                self._launch_runner(runner_conf)
+                # Check if launch failed immediately
+                if self.last_exception:
+                    # If _launch_runner stored an exception, re-raise it to stop the orchestrator start
+                    raise self.last_exception
 
-        # Always start watchdog to monitor runner threads for crashes/exits,
-        # regardless of whether restart_on_crash is enabled. When restart_on_crash
-        # is False the watchdog will still perform cleanup of internal state.
-        if self._watchdog_thread is None or not self._watchdog_thread.is_alive():
-            self._watchdog_thread = threading.Thread(
-                target=self._watchdog_loop, name="OrchestratorWatchdog"
+            # Always start watchdog to monitor runner threads for crashes/exits,
+            # regardless of whether restart_on_crash is enabled. When restart_on_crash
+            # is False the watchdog will still perform cleanup of internal state.
+            if self._watchdog_thread is None or not self._watchdog_thread.is_alive():
+                self._watchdog_thread = threading.Thread(
+                    target=self._watchdog_loop, name="OrchestratorWatchdog"
+                )
+                self._watchdog_thread.daemon = True
+                self._watchdog_thread.start()
+            self.logger.info("Orchestrator start sequence initiated.")
+        except Exception as e:
+            # Catch any exception during the main start sequence and log it
+            self.logger.error(
+                f"CRITICAL ERROR during Orchestrator start: {e}", exc_info=True
             )
-            self._watchdog_thread.daemon = True
-            self._watchdog_thread.start()
-        self.logger.info("Orchestrator start sequence initiated.")
+            self.last_exception = e
+            # Ensure stop event is set if start fails critically, so watchdog exits cleanly
+            self._stop_event.set()
+            # No need to re-raise here, the thread will exit, and is_alive should reflect the state.
 
     def _watchdog_loop(self) -> None:
         self.logger.info("Watchdog started.")
@@ -353,3 +386,11 @@ class Orchestrator:
 
         # Return the status of all runners
         return self.status()
+
+    def is_alive(self) -> bool:
+        """Return True if every runner thread is alive and the watchdog is running."""
+        if not hasattr(self, "_watchdog_thread") or self._watchdog_thread is None:
+            return True
+        all_runners_alive = all(t.is_alive() for t in self.runner_threads.values())
+        watchdog_alive = self._watchdog_thread.is_alive()
+        return all_runners_alive and watchdog_alive

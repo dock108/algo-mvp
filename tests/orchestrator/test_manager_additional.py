@@ -188,7 +188,9 @@ def test_launch_runner_success_path(sample_config_file, mocker):
 
     # Verify Thread was created with the correct arguments
     mock_thread_cls.assert_called_once_with(
-        target=mock_runner.start, name="test_runner"
+        target=orchestrator._runner_target_wrapper,
+        args=(mock_runner,),
+        name="test_runner",
     )
 
     # Verify the thread was stored and started

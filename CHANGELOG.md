@@ -225,3 +225,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Read-only Streamlit dashboard: equity curve, stats, open positions, last trades.
 - Auto-refresh every 5 seconds to display real-time updates.
 - CLI command for launching the dashboard: `python -m algo_mvp.dashboard`
+
+## [0.16.0] - YYYY-MM-DD
+### Added
+- Implemented a "Backtest-to-Paper" workflow, enabling a single command (`make paper`) to:
+  - Fetch recent market data (last 45 days, placeholder).
+  - Run parameter sweeps on trading strategies (placeholder).
+  - Select the best performing parameters based on configurable metrics.
+  - Generate live runner and orchestrator YAML configuration files using Jinja2 templates.
+  - Hot-reload a trading supervisor to start a 30-day paper trading session (placeholder for supervisor command).
+- New scripts:
+  - `scripts/backtest_last45.sh`: Orchestrates data fetching and backtesting.
+  - `scripts/choose_best.py`: Selects best parameters from backtest metrics (supports CSV/JSON input, outputs JSON).
+  - `scripts/start_paper.sh`: Generates live configurations using `jinja2-cli` and reloads supervisor.
+- New Jinja2 templates for configuration generation:
+  - `workflows/templates/fetch_last45.yaml`: Example config for data fetching.
+  - `workflows/templates/live_paper_template.yaml.jinja`: For individual live runner paper trading configs.
+  - `workflows/templates/orchestrator_paper.yaml.jinja`: For the paper trading orchestrator config.
+- New Makefile targets: `paper`, `fetch_and_backtest`, `choose_parameters`, `start_paper_session`, `clean_paper_artifacts`, `ensure_scripts_executable`.
+- Unit tests for `scripts/choose_best.py` (`tests/workflows/test_choose_best.py`).
+- Integration test structure for the `make paper` workflow (`tests/workflows/test_paper_workflow_integration.py`), skippable if Docker is unavailable.
+- New section "One-command paper run" in `README.md` documenting the feature.
+
+### Changed
+- (If any existing components were modified to support this, list them here)
+
+### Fixed
+- (If this feature fixes any existing bugs, list them here)

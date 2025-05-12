@@ -7,29 +7,22 @@ as well as a Supervisor class that monitors and auto-restarts the Orchestrator i
 
 import logging
 import os
-import threading
-import time
-import sys
-from typing import List, Optional, Literal
-
 import yaml
-from fastapi import FastAPI, HTTPException, Query, Request
-from pydantic import BaseModel, FilePath
+from typing import List, Optional
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Query, Request, status as http_status
+from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
 
-# Use the actual Orchestrator and OrchestratorConfig
-from algo_mvp.orchestrator.manager import Orchestrator
+from algo_mvp.supervisor.models import Supervisor, SupervisorConfig
+# Orchestrator import removed as it's only used for type hinting in models.py now
 
+logger = logging.getLogger("supervisor")
 
-class SupervisorConfig(BaseModel):
-    """Configuration model for the Supervisor."""
-
-    orchestrator_config: FilePath
-    host: str = "0.0.0.0"
-    port: int = 8000
-    log_level: str = "INFO"
-    shutdown_token: Optional[str] = None  # Loaded from env
+# Global supervisor instance REMOVED
 
 
+# --- Pydantic Models for API Responses ---
 class HealthResponseRunner(BaseModel):
     """Model representing the health status of a runner."""
 
@@ -38,733 +31,298 @@ class HealthResponseRunner(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Response model for the health endpoint."""
+    """Model for the /health endpoint response."""
 
-    status: Literal["ok", "error"]
-    runners: List[HealthResponseRunner]
-
-
-logger = logging.getLogger("supervisor")
-app = FastAPI()
-
-# This will hold the global supervisor instance
-_supervisor_instance: Optional["Supervisor"] = None
+    status: str  # 'ok' or 'error'
+    runners: List[HealthResponseRunner] = Field(default_factory=list)
 
 
-class Supervisor:
-    """
-    Supervisor class that manages and monitors the Orchestrator.
+# --- FastAPI Lifespan Management ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handles application startup and shutdown events."""
+    # Use print for TestClient visibility, logger might not be configured early enough
+    print("LIFESPAN: Startup sequence initiated.")
+    # Initialize startup error state
+    app.state.supervisor_startup_error = None
+    app.state.supervisor = None
 
-    Responsibilities:
-    - Starting and stopping the Orchestrator
-    - Monitoring the Orchestrator's health
-    - Automatically restarting the Orchestrator if it crashes
-    """
+    config_path_str = os.getenv("SUPERVISOR_CONFIG_PATH")
+    print(f"LIFESPAN: Env SUPERVISOR_CONFIG_PATH = {config_path_str}")
 
-    def __init__(self, config: SupervisorConfig):
-        self.config = config
-        self.orchestrator: Optional[Orchestrator] = None
-        self.orchestrator_thread: Optional[threading.Thread] = None
-        self._stop_event = threading.Event()
-        self.restart_attempts = 0
-        self.last_restart_timestamps: List[float] = []
-        self.lock = threading.Lock()
+    if not config_path_str:
+        err_msg = "SUPERVISOR_CONFIG_PATH environment variable not set."
+        print(f"LIFESPAN: CRITICAL - {err_msg}")
+        app.state.supervisor_startup_error = err_msg
+        raise RuntimeError(err_msg)
 
-        log_level_attr = getattr(logging, self.config.log_level.upper(), None)
-        if log_level_attr is None:
-            print(
-                "Warning: Invalid log level '%s'. Defaulting to INFO."
-                % self.config.log_level
-            )
-            log_level_attr = logging.INFO
-
-        # Ensure clean logging setup
-        # Remove all handlers associated with the root logger object.
-        for handler in logging.root.handlers[:]:
-            logging.root.removeHandler(handler)
-
-        # Basic config for the supervisor's own logger and potentially others
-        logging.basicConfig(
-            level=log_level_attr,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            handlers=[logging.StreamHandler(sys.stdout)],  # Explicitly use sys.stdout
-        )
-        # Set level for the supervisor's specific logger instance
-        logger.setLevel(log_level_attr)
-
-        if not self.config.orchestrator_config.is_file():  # Use is_file() for FilePath
-            actual_path = self.config.orchestrator_config.resolve()
-            logger.error(
-                "Orchestrator config file not found or is not a file: %s", actual_path
-            )
-            raise FileNotFoundError(
-                "Orchestrator config file not found: %s" % actual_path
-            )
-
-        self.config.shutdown_token = os.getenv("SUPERVISOR_TOKEN")
-        if not self.config.shutdown_token:
-            logger.warning(
-                "SUPERVISOR_TOKEN environment variable not set. Shutdown endpoint will be unprotected if accessed."
-            )
-            # In a real scenario, you might want to exit or disable the endpoint.
-            # For this exercise, we allow it but log a warning.
-
-    def _start_orchestrator_thread(self):
-        """Start the orchestrator in a new thread if it's not already running."""
-        with self.lock:
-            if self.orchestrator and self.orchestrator.is_alive():
-                logger.info("Orchestrator already running.")
-                return
-
-            logger.info(
-                "Initializing Orchestrator with config: %s",
-                self.config.orchestrator_config,
-            )
-            try:
-                # Replace with actual Orchestrator once available
-                self.orchestrator = Orchestrator(
-                    config_path=str(self.config.orchestrator_config)
-                )
-            except Exception as e:
-                logger.error("Failed to initialize Orchestrator: %s", e, exc_info=True)
-                return  # Don't attempt to start if init fails
-
-            logger.info("Starting Orchestrator in a new thread...")
-            self.orchestrator_thread = threading.Thread(
-                target=self.orchestrator.start, name="OrchestratorRunner"
-            )
-            self.orchestrator_thread.daemon = True  # So it exits when supervisor exits
-            self.orchestrator_thread.start()
-            logger.info("Orchestrator thread started.")
-            self.restart_attempts = 0  # Reset attempts on successful start
-
-    def start(self):
-        """Start the supervisor and the orchestrator."""
-        logger.info("Supervisor starting...")
-        self._stop_event.clear()
-        self._start_orchestrator_thread()
-
-        # Start watchdog in a separate thread
-        watchdog_thread = threading.Thread(
-            target=self._watchdog_loop, name="SupervisorWatchdog"
-        )
-        watchdog_thread.daemon = True
-        watchdog_thread.start()
-        logger.info(
-            "Supervisor started. Health check on http://%s:%s/health",
-            self.config.host,
-            self.config.port,
-        )
-        if not self.config.shutdown_token:
-            logger.warning(
-                "Shutdown token is not set. The /shutdown endpoint is currently UNPROTECTED."
-            )
-        else:
-            logger.info("Shutdown endpoint /shutdown requires token authentication.")
-
-    def _watchdog_loop(self):
-        """Monitor the orchestrator's health and restart it if necessary."""
-        logger.info("Supervisor watchdog started.")
-        while not self._stop_event.is_set():
-            time.sleep(1)  # Check orchestrator thread status every second
-
-            if self._stop_event.is_set():
-                logger.debug("Watchdog: stop event received, exiting loop.")
-                break
-
-            orchestrator_healthy = False
-            if (
-                self.orchestrator
-                and self.orchestrator_thread
-                and self.orchestrator_thread.is_alive()
-            ):
-                # Further check if orchestrator's own is_alive (if it has one that reflects internal health)
-                if hasattr(self.orchestrator, "is_alive") and callable(
-                    getattr(self.orchestrator, "is_alive")
-                ):
-                    if self.orchestrator.is_alive():  # type: ignore
-                        orchestrator_healthy = True
-                    else:  # Orchestrator's internal mechanism says it's not alive, even if thread is.
-                        logger.warning(
-                            "Watchdog: Orchestrator thread is alive, but Orchestrator.is_alive() is false."
-                        )
-                else:  # No specific is_alive on orchestrator, rely on thread.
-                    orchestrator_healthy = True
-
-            if not orchestrator_healthy:
-                logger.warning(
-                    "Watchdog: Orchestrator thread is not alive or Orchestrator reported not healthy."
-                )
-                if (
-                    self._stop_event.is_set()
-                ):  # Check again, in case stop was called during sleep
-                    logger.info("Watchdog: Stop event set, not attempting restart.")
-                    break
-
-                # Implement restart logic with back-off and retry limit
-                now = time.monotonic()
-                # Remove timestamps older than 60 seconds
-                self.last_restart_timestamps = [
-                    ts for ts in self.last_restart_timestamps if now - ts <= 60
-                ]
-
-                if len(self.last_restart_timestamps) < 3:  # Max 3 retries per minute
-                    logger.info(
-                        "Attempting to restart Orchestrator (attempt %d)...",
-                        self.restart_attempts + 1,
-                    )
-                    self.last_restart_timestamps.append(now)
-                    self.restart_attempts += 1
-
-                    if self.orchestrator:  # Try to stop it cleanly if it exists
-                        try:
-                            logger.info(
-                                "Watchdog: Requesting stop on existing orchestrator before restart..."
-                            )
-                            self.orchestrator.stop()  # Signal orchestrator's own stop
-                            if (
-                                self.orchestrator_thread
-                                and self.orchestrator_thread.is_alive()
-                            ):
-                                self.orchestrator_thread.join(
-                                    timeout=5
-                                )  # Give it a moment to stop
-                        except Exception as e:
-                            logger.error(
-                                "Watchdog: Error stopping orchestrator during restart attempt: %s",
-                                e,
-                                exc_info=True,
-                            )
-
-                    time.sleep(3)  # 3-second back-off
-                    if (
-                        not self._stop_event.is_set()
-                    ):  # Re-check stop event before starting
-                        self._start_orchestrator_thread()
-                    else:
-                        logger.info(
-                            "Watchdog: Stop event set during backoff, restart aborted."
-                        )
-                        break
-                else:
-                    logger.error(
-                        "Orchestrator restart limit reached (3 retries in 60s). Not attempting further restarts automatically."
-                    )
-                    # Consider what to do here - maybe a longer cooldown or require manual intervention.
-                    # For now, it will just stop trying until the 60s window passes.
-                    time.sleep(
-                        10
-                    )  # Wait longer before checking again to avoid busy-looping on this error message.
-        logger.info("Supervisor watchdog stopped.")
-
-    def stop(self, from_signal: bool = False):
-        """Stop the supervisor and orchestrator."""
-        logger.info("Supervisor stopping... (Signal: %s)", from_signal)
-        if self._stop_event.is_set():
-            logger.info("Supervisor already stopping.")
-            return
-        self._stop_event.set()
-
-        if self.orchestrator:
-            logger.info("Stopping Orchestrator...")
-            try:
-                self.orchestrator.stop()
-            except Exception as e:
-                logger.error("Error stopping orchestrator: %s", e, exc_info=True)
-
-        if self.orchestrator_thread and self.orchestrator_thread.is_alive():
-            logger.info("Joining Orchestrator thread...")
-            self.orchestrator_thread.join(timeout=10)
-            if self.orchestrator_thread.is_alive():
-                logger.warning("Orchestrator thread did not stop in time.")
-
-        logger.info("Supervisor stopped.")
-        # For FastAPI/uvicorn, actual server shutdown is handled by uvicorn.Server.should_exit
-        # This method ensures our managed threads are stopped.
-
-
-def get_supervisor() -> Supervisor:
-    """Get the global supervisor instance."""
-    global _supervisor_instance
-    if _supervisor_instance is None:
-        # This should not happen in normal FastAPI flow if startup event is used
-        raise RuntimeError(
-            "Supervisor not initialized. Ensure it's set up in FastAPI startup."
-        )
-    return _supervisor_instance
-
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    FastAPI startup event handler.
-
-    Loads supervisor configuration, initializes and starts the supervisor.
-    """
-    global _supervisor_instance
-    print(
-        "STARTUP_EVENT: Entered startup_event.", file=sys.stderr
-    )  # Ensure it flushes / is visible
-
-    config_path_str = os.getenv(
-        "SUPERVISOR_CONFIG_PATH", "configs/supervisor_sample.yaml"
-    )
-    print(
-        "STARTUP_EVENT: Attempting to load supervisor config from: %s"
-        % config_path_str,
-        file=sys.stderr,
-    )
+    if not os.path.isfile(config_path_str):
+        err_msg = f"Supervisor configuration file not found: {config_path_str}"
+        print(f"LIFESPAN: CRITICAL - {err_msg}")
+        app.state.supervisor_startup_error = err_msg
+        raise FileNotFoundError(err_msg)
 
     try:
-        print(
-            "STARTUP_EVENT: Step 1: Checking if config file exists at '%s'"
-            % config_path_str,
-            file=sys.stderr,
-        )
-        if not os.path.exists(config_path_str):
-            print(
-                "STARTUP_EVENT ERROR: Config file '%s' does not exist (os.path.exists failed)."
-                % config_path_str,
-                file=sys.stderr,
-            )
-            raise FileNotFoundError(
-                "Explicit check failed: Supervisor configuration file not found at %s"
-                % config_path_str
-            )
-        print("STARTUP_EVENT: Step 1: Config file exists.", file=sys.stderr)
-
-        print(
-            "STARTUP_EVENT: Step 2: Attempting to open and read config file.",
-            file=sys.stderr,
-        )
-        with open(config_path_str, "r", encoding="utf-8") as f:
+        print(f"LIFESPAN: Loading config from {config_path_str}...")
+        with open(config_path_str, "r") as f:
             config_data = yaml.safe_load(f)
-        print(
-            "STARTUP_EVENT: Step 2: Config file opened and YAML loaded. Data: %s"
-            % config_data,
-            file=sys.stderr,
-        )
-
-        print(
-            "STARTUP_EVENT: Step 3: Attempting to validate SupervisorConfig with Pydantic.",
-            file=sys.stderr,
-        )
         supervisor_config = SupervisorConfig(**config_data)
-        print(
-            "STARTUP_EVENT: Step 3: SupervisorConfig validated. Orch config path: %s"
-            % supervisor_config.orchestrator_config,
-            file=sys.stderr,
-        )
+        print("LIFESPAN: Config loaded successfully.")
 
-        print(
-            "STARTUP_EVENT: Step 3.5: Checking orchestrator config file: %s"
-            % supervisor_config.orchestrator_config,
-            file=sys.stderr,
-        )
+        # Explicit check if the orchestrator config file path from the loaded config actually exists
         if not supervisor_config.orchestrator_config.is_file():
+            err_msg = f"Orchestrator config file specified in supervisor config does not exist: {supervisor_config.orchestrator_config}"
+            print(f"LIFESPAN: CRITICAL - {err_msg}")
+            app.state.supervisor_startup_error = err_msg
+            raise FileNotFoundError(err_msg)
+        else:
             print(
-                "STARTUP_EVENT ERROR: Orch config '%s' not a file."
-                % supervisor_config.orchestrator_config,
-                file=sys.stderr,
+                f"LIFESPAN: Orchestrator config path confirmed exists: {supervisor_config.orchestrator_config}"
             )
-            raise FileNotFoundError(
-                "Orchestrator config file '%s' not found during startup check."
-                % supervisor_config.orchestrator_config
-            )
+
+        print("LIFESPAN: Attempting to instantiate Supervisor...")
+        supervisor_instance = Supervisor(config=supervisor_config)
+        print(f"LIFESPAN: Supervisor instantiated: {type(supervisor_instance)}")
+
+        print("LIFESPAN: Assigning supervisor instance to app.state.supervisor...")
+        app.state.supervisor = supervisor_instance
         print(
-            "STARTUP_EVENT: Step 3.5: Orchestrator config file confirmed to exist.",
-            file=sys.stderr,
+            f"LIFESPAN: Assigned. Checking app.state.supervisor: {getattr(app.state, 'supervisor', 'NOT FOUND')}"
         )
 
-        print(
-            "STARTUP_EVENT: Step 4: Attempting to initialize Supervisor instance.",
-            file=sys.stderr,
-        )
-        _supervisor_instance = Supervisor(config=supervisor_config)
-        print(
-            "STARTUP_EVENT: Step 4: Supervisor instance initialized.", file=sys.stderr
-        )
+        print("LIFESPAN: Attempting supervisor.start()...")
+        app.state.supervisor.start()
+        print("LIFESPAN: supervisor.start() completed.")
+        # logger.info("Supervisor initialized and started via lifespan.")
 
-        print(
-            "STARTUP_EVENT: Step 5: Attempting to start supervisor instance.",
-            file=sys.stderr,
-        )
-        _supervisor_instance.start()
-        print(
-            "STARTUP_EVENT: Step 5: Supervisor instance started successfully.",
-            file=sys.stderr,
-        )
-
-    except FileNotFoundError as e:
-        print("STARTUP_EVENT ERROR (FileNotFoundError): %s" % e, file=sys.stderr)
-        _supervisor_instance = None
-        return
     except Exception as e:
-        print("STARTUP_EVENT ERROR (General Exception): %s" % e, file=sys.stderr)
-        _supervisor_instance = None
-        return
+        err_msg = f"Supervisor initialization failed: {e}"
+        print(f"LIFESPAN: CRITICAL - Exception during startup: {err_msg}")
+        app.state.supervisor_startup_error = err_msg
+        app.state.supervisor = None  # Ensure state reflects failure
+        raise RuntimeError(err_msg) from e
 
+    print("LIFESPAN: Startup yield.")
+    yield  # Application runs here
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """
-    FastAPI shutdown event handler.
-
-    Stops the supervisor and its managed orchestrator.
-    """
-    logger.info("FastAPI shutdown event triggered.")
-    try:
-        supervisor = get_supervisor()
-        if supervisor:
-            supervisor.stop()
-    except RuntimeError:
-        logger.warning("Supervisor not initialized during shutdown event")
-    # Uvicorn handles its own server stop
-
-
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """
-    Health check endpoint.
-
-    Returns:
-        HealthResponse: JSON response with status and runner details
-
-    Status Codes:
-        200: All runners are healthy
-        503: One or more runners are not healthy, or supervisor is not initialized
-    """
-    try:
-        supervisor = get_supervisor()
-    except RuntimeError:
-        logger.error("/health: Supervisor not initialized.")
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(
-            content={
-                "status": "error",
-                "runners": [{"name": "supervisor_status", "status": "uninitialized"}],
-            },
-            status_code=503,
-        )
-
-    if not supervisor or not supervisor.orchestrator:
-        logger.error("/health: Orchestrator not initialized.")
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(
-            content={
-                "status": "error",
-                "runners": [{"name": "orchestrator_status", "status": "uninitialized"}],
-            },
-            status_code=503,
-        )
-
-    try:
-        orchestrator_status_dict = supervisor.orchestrator.status()
-        logger.debug("/health: Orchestrator status: %s", orchestrator_status_dict)
-    except Exception as e:
-        logger.error("/health: Error getting orchestrator status: %s", e, exc_info=True)
-        # This means the orchestrator itself might be broken or in a bad state
-        # Return a 503 if we can't even get status
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(
-            content={
-                "status": "error",
-                "runners": [{"name": "orchestrator_communication", "status": "error"}],
-            },
-            status_code=503,
-        )
-
-    runners_health: List[HealthResponseRunner] = []
-    all_ok = True
-    if not orchestrator_status_dict:  # No runners configured or reported
-        # If orchestrator is up but has no runners, is that "ok" or an "error"?
-        # Assuming "ok" if orchestrator itself is fine and just has no tasks.
-        pass  # all_ok remains true, runners_health list remains empty
-
-    for name, stat_val in orchestrator_status_dict.items():
-        runners_health.append(HealthResponseRunner(name=name, status=str(stat_val)))
-        # Define what constitutes "not ok".
-        # "running" is clearly ok. "stopped" might be ok if intentional.
-        # "crashed", "error", "pending_or_failed_to_start" are not ok.
-        # Let's assume only "running" (and maybe "starting" if that's a state) are truly "ok" for health.
-        # For simplicity, if any runner is not in a state considered "fully operational", overall is "error".
-        # The prompt says "HTTP 200 when all runners running, else 503."
-        # So, any status other than "running" (or a similar positive active state) means not all are "running".
-        if not isinstance(stat_val, str) or "running" not in stat_val.lower():
-            all_ok = False
-
-    # Check orchestrator's main thread health as well
-    # If orchestrator thread died but status somehow reports old data, that's also an error.
-    if supervisor.orchestrator_thread and not supervisor.orchestrator_thread.is_alive():
-        logger.warning("/health: Orchestrator main thread is not alive.")
-        all_ok = False  # If orchestrator thread is dead, system is not ok.
-        # Add a pseudo-runner for orchestrator's own health if it's not part of its status()
-        if not any(r.name == "_orchestrator_thread" for r in runners_health):
-            runners_health.append(
-                HealthResponseRunner(name="_orchestrator_thread", status="DEAD")
-            )
-
-    current_status: Literal["ok", "error"] = "ok" if all_ok else "error"
-    http_status_code = 200 if all_ok else 503
-
-    # To return a 503, we need to raise HTTPException or return a Starlette Response.
-    if http_status_code == 503:
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(
-            content={
-                "status": current_status,
-                "runners": [r.model_dump() for r in runners_health],
-            },
-            status_code=http_status_code,
-        )
-
-    # If 200, FastAPI will handle it correctly with the response_model
-    return HealthResponse(status=current_status, runners=runners_health)
-
-
-@app.post("/shutdown")
-async def shutdown_server(
-    request: Request,
-    token: Optional[str] = Query(None),  # Token from query parameter
-):
-    """
-    Shutdown endpoint to gracefully stop the supervisor and orchestrator.
-
-    Args:
-        request: The FastAPI request object, used to access app.state
-        token: Optional token for authentication
-
-    Returns:
-        dict: Message confirming shutdown initiated
-
-    Status Codes:
-        200: Shutdown initiated successfully
-        401: Token required but not provided
-        403: Invalid token provided
-    """
-    # TODO: Security improvement needed for production deployment
-    # Using query parameters for tokens is not secure as they appear in logs, browser history,
-    # and can be cached. For production, consider:
-    # 1. Using Authorization header: Authorization: Bearer <token>
-    # 2. Using POST JSON body: {"token": "your-token"}
-    # 3. Always use HTTPS in production
-    # This is fine for internal LAN deployments but should be updated for external exposure.
-
-    supervisor = get_supervisor()
-
-    # Token validation
-    if supervisor.config.shutdown_token:  # If token is configured
-        if not token:
-            logger.warning(
-                "/shutdown: Attempted access without token when token is required."
-            )
-            raise HTTPException(status_code=401, detail="Shutdown token required.")
-        if token != supervisor.config.shutdown_token:
-            # Don't log any part of the token
-            logger.warning("/shutdown: Invalid token received")
-            raise HTTPException(status_code=403, detail="Invalid shutdown token.")
-
-    logger.info("/shutdown endpoint called. Requesting supervisor stop.")
-    supervisor.stop(from_signal=False)  # Indicate it's an API-triggered stop
-
-    # Signal uvicorn to shutdown
-    # We need to get the Uvicorn server instance from app.state
-    server = getattr(request.app.state, "uvicorn_server", None)
-    if server and hasattr(server, "should_exit"):
-        logger.info("Signaling Uvicorn server to exit.")
-        server.should_exit = True
+    # --- Shutdown ---
+    print("LIFESPAN: Shutdown sequence initiated.")
+    # logger.info(...)
+    supervisor: Optional[Supervisor] = getattr(app.state, "supervisor", None)
+    if supervisor:
+        print("LIFESPAN: Stopping supervisor instance...")
+        # logger.info(...)
+        supervisor.stop()
     else:
-        logger.warning(
-            "Uvicorn server instance not found in app.state.uvicorn_server. "
-            "Cannot set should_exit. Orchestrator will stop, but Uvicorn might not exit gracefully without external signal."
-        )
-
-    return {
-        "message": "Shutdown initiated. Orchestrator stopping. Uvicorn server will exit if configured."
-    }
+        print("LIFESPAN: No supervisor instance found in app.state during shutdown.")
+        # logger.warning(...)
+    print("LIFESPAN: Shutdown complete.")
+    # logger.info(...)
 
 
-@app.post("/action/flatten_all")
-async def flatten_all(token: Optional[str] = Query(None)):
-    """
-    Close all open positions across all running LiveRunners.
+# --- FastAPI App Initialization ---
+app = FastAPI(
+    title="Algo MVP Supervisor",
+    description="Manages and monitors the Algo MVP Orchestrator.",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
-    Args:
-        token: Required token for authentication
 
-    Returns:
-        dict: Message confirming all positions are being flattened
-
-    Status Codes:
-        200: Action initiated successfully
-        401: Token required but not provided
-        403: Invalid token provided
-        500: Error executing the action
-    """
-    # TODO: Security improvement needed for production deployment
-    # Using query parameters for tokens is not secure as they appear in logs, browser history,
-    # and can be cached. For production, consider:
-    # 1. Using Authorization header: Authorization: Bearer <token>
-    # 2. Using POST JSON body: {"token": "your-token"}
-    # 3. Always use HTTPS in production
-    # This is fine for internal LAN deployments but should be updated for external exposure.
-
-    supervisor = get_supervisor()
-
-    # Token validation
-    if supervisor.config.shutdown_token:  # Using the same token as shutdown endpoint
-        if not token:
-            logger.warning(
-                "/action/flatten_all: Attempted access without token when token is required."
-            )
-            raise HTTPException(
-                status_code=401, detail="Authentication token required."
-            )
-        if token != supervisor.config.shutdown_token:
-            logger.warning("/action/flatten_all: Invalid token received")
-            raise HTTPException(status_code=403, detail="Invalid authentication token.")
-
-    logger.info("/action/flatten_all endpoint called. Closing all positions.")
-
-    try:
-        # Get the orchestrator and iterate over its runners
-        if not supervisor.orchestrator:
-            raise HTTPException(status_code=500, detail="Orchestrator not initialized.")
-
-        runners_closed = 0
-        for runner_name, runner in supervisor.orchestrator.runners.items():
-            if hasattr(runner, "adapter") and hasattr(
-                runner.adapter, "close_all_positions"
-            ):
-                logger.info(f"Closing all positions for runner: {runner_name}")
-                runner.adapter.close_all_positions()
-                runners_closed += 1
-            else:
-                logger.warning(
-                    f"Runner {runner_name} does not support close_all_positions()"
-                )
-
-        return {
-            "message": f"Flatten all initiated. Closing positions for {runners_closed} runner(s)."
-        }
-    except Exception as e:
-        logger.error(f"Error during flatten_all: {e}", exc_info=True)
+# --- API Endpoints ---
+@app.get(
+    "/health",
+    response_model=HealthResponse,
+    summary="Check system health",
+    description="Returns the status of the supervisor and the orchestrator's runners.",
+    responses={
+        200: {"description": "Service is healthy"},
+        503: {"description": "Service is unhealthy or orchestrator is unavailable"},
+    },
+)
+async def get_health(request: Request):
+    """Check the health of the supervisor and the orchestrator."""
+    supervisor: Optional[Supervisor] = getattr(request.app.state, "supervisor", None)
+    if not supervisor:
         raise HTTPException(
-            status_code=500, detail=f"Error flattening positions: {str(e)}"
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supervisor not initialized",
         )
 
+    orchestrator = supervisor.orchestrator
+    status_data = {"status": "unknown", "runners": []}
+    overall_status = http_status.HTTP_503_SERVICE_UNAVAILABLE  # Default to unhealthy
 
-@app.post("/action/pause")
-async def pause_runner(
-    runner: str = Query(..., description="The name of the runner to pause/resume"),
-    token: Optional[str] = Query(None, description="Authentication token"),
-):
-    """
-    Toggle a runner between active and paused state. When paused, new orders are suppressed.
+    # Check supervisor's orchestrator thread first
+    orchestrator_thread_alive = (
+        supervisor.orchestrator_thread is not None
+        and supervisor.orchestrator_thread.is_alive()
+    )
 
-    Args:
-        runner: The name of the runner to toggle
-        token: Required token for authentication
+    # Fetch runner status early IF orchestrator exists, but don't fail the whole check yet
+    # Initialize runner_status related vars
+    runner_status_data = []
+    runners_ok = True  # Assume ok unless proven otherwise
+    status_fetch_error = None
+    orchestrator_alive_internal = True  # Assume ok unless proven otherwise
 
-    Returns:
-        dict: Current paused state of the runner
+    if orchestrator:
+        try:
+            # Check orchestrator's internal health *first*
+            if hasattr(orchestrator, "is_alive") and callable(
+                getattr(orchestrator, "is_alive")
+            ):
+                orchestrator_alive_internal = orchestrator.is_alive()
 
-    Status Codes:
-        200: Action completed successfully
-        401: Token required but not provided
-        403: Invalid token provided
-        404: Runner not found
-        500: Error executing the action
-    """
-    # TODO: Security improvement needed for production deployment
-    # Using query parameters for tokens is not secure as they appear in logs, browser history,
-    # and can be cached. For production, consider:
-    # 1. Using Authorization header: Authorization: Bearer <token>
-    # 2. Using POST JSON body: {"token": "your-token"}
-    # 3. Always use HTTPS in production
-    # This is fine for internal LAN deployments but should be updated for external exposure.
+            # Attempt to get runner status regardless of internal health (might still be possible)
+            raw_runner_status = orchestrator.status()
+            for name, state in raw_runner_status.items():
+                runner_status_data.append({"name": name, "status": state})
+                if state.lower() != "running":
+                    runners_ok = False
+                    logger.warning(
+                        f"Health check: Runner '{name}' is not running (state: {state})"
+                    )
 
-    supervisor = get_supervisor()
+        except Exception as e:
+            logger.error(
+                f"Error getting orchestrator status for health check: {e}",
+                exc_info=True,
+            )
+            status_fetch_error = e
+            runners_ok = False  # Cannot confirm runners are ok if status fails
 
-    # Token validation
+    # --- Determine Overall Status ---
+
+    if not orchestrator_thread_alive:
+        status_data["status"] = "error"
+        status_data["detail"] = "Orchestrator thread is not alive."
+        # Add placeholder if runner status couldn't be fetched
+        if not runner_status_data and not status_fetch_error:
+            runner_status_data.append(
+                {"name": "_orchestrator_thread", "status": "DEAD"}
+            )
+        overall_status = http_status.HTTP_503_SERVICE_UNAVAILABLE
+        logger.error("Health check failed: Orchestrator thread is not alive.")
+
+    elif not orchestrator:
+        status_data["status"] = "error"
+        status_data["detail"] = "Orchestrator instance not found in supervisor."
+        overall_status = http_status.HTTP_503_SERVICE_UNAVAILABLE
+        logger.error("Health check failed: Orchestrator instance not found.")
+
+    elif status_fetch_error:
+        status_data["status"] = "error"
+        status_data["detail"] = (
+            f"Failed to get orchestrator status: {status_fetch_error}"
+        )
+        # Add placeholder indicating communication error
+        runner_status_data.append(
+            {"name": "orchestrator_communication", "status": "error"}
+        )
+        overall_status = http_status.HTTP_500_INTERNAL_SERVER_ERROR  # Internal error
+        logger.error(f"Health check failed: Status fetch error: {status_fetch_error}")
+
+    elif not orchestrator_alive_internal:
+        status_data["status"] = "error"
+        status_data["detail"] = "Orchestrator internal state reports not alive."
+        # Add placeholder indicating internal error
+        runner_status_data.append(
+            {"name": "orchestrator_internal", "status": "unhealthy"}
+        )
+        overall_status = http_status.HTTP_503_SERVICE_UNAVAILABLE
+        logger.error(
+            "Health check failed: Orchestrator internal state reports not alive."
+        )
+
+    elif not runners_ok:
+        status_data["status"] = "error"
+        status_data["detail"] = "One or more runners are not running."
+        overall_status = http_status.HTTP_503_SERVICE_UNAVAILABLE
+        logger.warning("Health check failed: One or more runners not running.")
+
+    else:  # All checks passed
+        status_data["status"] = "ok"
+        overall_status = http_status.HTTP_200_OK
+        logger.debug("Health check: Status OK.")
+
+    # Populate runners list, ensuring it's always included
+    status_data["runners"] = runner_status_data
+
+    # Use JSONResponse to ensure the status code is set correctly based on overall_status
+    return JSONResponse(content=status_data, status_code=overall_status)
+
+
+@app.post(
+    "/shutdown",
+    summary="Stop the orchestrator and shut down the server",
+    description="Requires a valid token if SUPERVISOR_TOKEN is set.",
+)
+async def shutdown_server(request: Request, token: Optional[str] = Query(None)):
+    supervisor: Optional[Supervisor] = getattr(request.app.state, "supervisor", None)
+
+    if not supervisor:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supervisor not initialized, cannot process shutdown.",
+        )
+
+    # Validate token if configured
     if supervisor.config.shutdown_token:
         if not token:
-            logger.warning(
-                "/action/pause: Attempted access without token when token is required."
-            )
             raise HTTPException(
-                status_code=401, detail="Authentication token required."
+                status_code=http_status.HTTP_401_UNAUTHORIZED,
+                detail="Shutdown token required.",
             )
         if token != supervisor.config.shutdown_token:
-            logger.warning("/action/pause: Invalid token received")
-            raise HTTPException(status_code=403, detail="Invalid authentication token.")
+            raise HTTPException(
+                status_code=http_status.HTTP_403_FORBIDDEN,
+                detail="Invalid shutdown token.",
+            )
 
-    logger.info(f"/action/pause endpoint called for runner: {runner}")
+    logger.info("Shutdown requested via API.")
 
-    try:
-        # Get the orchestrator and the specified runner
-        if not supervisor.orchestrator:
-            raise HTTPException(status_code=500, detail="Orchestrator not initialized.")
+    # Signal supervisor to stop its components (orchestrator, watchdog)
+    # Supervisor's stop method handles orchestrator stop and thread joins
+    supervisor.stop()
 
-        if runner not in supervisor.orchestrator.runners:
-            raise HTTPException(status_code=404, detail=f"Runner '{runner}' not found.")
+    # Additionally, signal uvicorn to exit gracefully if running under uvicorn directly
+    # This relies on uvicorn setting 'server' in app.state, which might not always happen
+    uvicorn_server = getattr(request.app.state, "uvicorn_server", None)
+    if uvicorn_server and hasattr(uvicorn_server, "handle_exit"):
+        logger.info("Signaling Uvicorn server to exit.")
+        # uvicorn_server.should_exit = True # Old way
+        import signal
 
-        target_runner = supervisor.orchestrator.runners[runner]
-
-        # Toggle the paused state
-        if not hasattr(target_runner, "paused"):
-            target_runner.paused = False  # Initialize if not set
-
-        target_runner.paused = not target_runner.paused
-
-        current_state = "paused" if target_runner.paused else "active"
-        logger.info(f"Runner '{runner}' is now {current_state}")
-
-        return {"paused": target_runner.paused}
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        logger.error(
-            f"Error toggling pause state for runner {runner}: {e}", exc_info=True
+        uvicorn_server.handle_exit(sig=signal.SIGINT, frame=None)  # More reliable way
+    else:
+        logger.warning(
+            "Uvicorn server instance not found in app.state or does not have 'handle_exit'. Cannot signal programmatic exit."
         )
+        logger.warning(
+            "Supervisor and Orchestrator stopping, but Uvicorn process might need manual stop (e.g., CTRL+C or external signal)."
+        )
+
+    return {"message": "Shutdown initiated. Supervisor and Orchestrator stopping."}
+
+
+# --- Example Actions (Placeholder, adapt as needed) ---
+
+
+@app.post(
+    "/action/flatten_all",
+    summary="[Example] Flatten all positions across all runners",
+    description="Requires token. Tells all runners to close open positions.",
+)
+async def action_flatten_all(request: Request, token: Optional[str] = Query(None)):
+    supervisor: Optional[Supervisor] = getattr(request.app.state, "supervisor", None)
+    if not supervisor or not supervisor.orchestrator:
         raise HTTPException(
-            status_code=500, detail=f"Error changing runner state: {str(e)}"
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supervisor or Orchestrator not initialized.",
         )
 
-
-@app.post("/action/reload_config")
-async def reload_config(
-    token: Optional[str] = Query(None, description="Authentication token"),
-):
-    """
-    Hot-reload the orchestrator configuration from the original YAML manifest.
-    This stops all existing runners and starts new ones based on the updated config.
-
-    Args:
-        token: Required token for authentication
-
-    Returns:
-        dict: Status of all runners after reload
-
-    Status Codes:
-        200: Configuration reloaded successfully
-        401: Token required but not provided
-        403: Invalid token provided
-        500: Error during reload (including YAML parsing failures)
-    """
-    # TODO: Security improvement needed for production deployment
-    # This is just a simple token check for now.
-    supervisor = get_supervisor()
-    if (
-        supervisor
-        and hasattr(supervisor, "config")
-        and supervisor.config.shutdown_token
-    ):
+    if supervisor.config.shutdown_token:  # Use same token for actions for simplicity
         if not token:
             raise HTTPException(
                 status_code=401, detail="Authentication token required."
@@ -772,26 +330,123 @@ async def reload_config(
         if token != supervisor.config.shutdown_token:
             raise HTTPException(status_code=403, detail="Invalid authentication token.")
 
+    logger.info("Flatten all action requested via API.")
+    # Access orchestrator runners safely
+    runners = getattr(supervisor.orchestrator, "runners", {})
+    for runner_name, runner_instance in runners.items():
+        # Check if runner has the necessary method (adapt based on actual runner implementation)
+        if hasattr(runner_instance, "adapter") and hasattr(
+            runner_instance.adapter, "close_all_positions"
+        ):
+            try:
+                logger.info(f"Requesting flatten for runner: {runner_name}")
+                # Assuming close_all_positions is synchronous for now
+                runner_instance.adapter.close_all_positions()
+            except Exception as e:
+                logger.error(
+                    f"Error calling close_all_positions for runner {runner_name}: {e}",
+                    exc_info=True,
+                )
+        else:
+            logger.warning(
+                f"Runner {runner_name} does not support flatten action (close_all_positions)."
+            )
+
+    return {"message": "Flatten all action initiated for capable runners."}
+
+
+@app.post(
+    "/action/pause",
+    summary="[Example] Pause/unpause a specific runner",
+    description="Requires token. Toggles the paused state of a runner.",
+)
+async def action_pause_runner(
+    request: Request, runner: str = Query(...), token: Optional[str] = Query(None)
+):
+    supervisor: Optional[Supervisor] = getattr(request.app.state, "supervisor", None)
     if not supervisor or not supervisor.orchestrator:
         raise HTTPException(
-            status_code=503, detail="Supervisor or orchestrator not initialized."
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supervisor or Orchestrator not initialized.",
         )
 
-    try:
-        # Call reload on the orchestrator, which will return status of all runners
-        result = supervisor.orchestrator.reload(
-            manifest_path=supervisor.orchestrator.config_path
+    if supervisor.config.shutdown_token:
+        if not token:
+            raise HTTPException(
+                status_code=401, detail="Authentication token required."
+            )
+        if token != supervisor.config.shutdown_token:
+            raise HTTPException(status_code=403, detail="Invalid authentication token.")
+
+    logger.info(f"Pause/unpause action requested for runner '{runner}' via API.")
+    runners = getattr(supervisor.orchestrator, "runners", {})
+    target_runner = runners.get(runner)
+
+    if not target_runner:
+        raise HTTPException(status_code=404, detail=f"Runner '{runner}' not found.")
+
+    # Example: Assume runners have a 'paused' boolean attribute
+    if not hasattr(target_runner, "paused"):
+        # Initialize if doesn't exist? Or raise error? Let's initialize for flexibility.
+        logger.warning(
+            f"Runner {runner} lacks 'paused' attribute, initializing to False."
         )
-        return {"status": "reloaded", "runners": result}
-    except yaml.YAMLError as e:
-        # Let YAML parsing errors propagate as 500 errors with details
+        target_runner.paused = False
+
+    # Toggle paused state
+    target_runner.paused = not target_runner.paused
+    new_state = "paused" if target_runner.paused else "running"
+    logger.info(f"Runner {runner} state changed to: {new_state}")
+
+    return {"runner": runner, "paused": target_runner.paused}
+
+
+@app.post(
+    "/action/reload_config",
+    summary="[Example] Reload orchestrator config",
+    description="Requires token. Attempts to reload the orchestrator's configuration.",
+)
+async def action_reload_config(request: Request, token: Optional[str] = Query(None)):
+    supervisor: Optional[Supervisor] = getattr(request.app.state, "supervisor", None)
+    if not supervisor or not supervisor.orchestrator:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to reload config: YAML parsing error: {str(e)}",
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supervisor or Orchestrator not initialized.",
+        )
+
+    if supervisor.config.shutdown_token:
+        if not token:
+            raise HTTPException(
+                status_code=401, detail="Authentication token required."
+            )
+        if token != supervisor.config.shutdown_token:
+            raise HTTPException(status_code=403, detail="Invalid authentication token.")
+
+    logger.info("Reload config action requested via API.")
+    try:
+        # Assuming orchestrator has a reload method that returns new runner status
+        if hasattr(supervisor.orchestrator, "reload") and callable(
+            getattr(supervisor.orchestrator, "reload")
+        ):
+            reload_result = supervisor.orchestrator.reload()
+            logger.info(
+                f"Orchestrator config reload attempted. Result: {reload_result}"
+            )
+            return {"reloaded": True, "runners": reload_result}
+        else:
+            logger.error(
+                "Orchestrator instance does not have a callable 'reload' method."
+            )
+            raise HTTPException(
+                status_code=501,
+                detail="Reload config action not implemented by Orchestrator.",
+            )
+
+    except yaml.YAMLError as e:
+        logger.error(f"YAML parsing error during config reload: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to reload config: YAML parsing error: {e}"
         )
     except Exception as e:
-        # Catch other exceptions during reload
-        logger.error(f"Error during config reload: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to reload config: {str(e)}"
-        )
+        logger.error(f"Error during orchestrator config reload: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to reload config: {e}")

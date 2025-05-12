@@ -1,0 +1,84 @@
+# Jinja2 template for the paper trading orchestrator configuration.
+# This might define how multiple live runners are managed for the 30-day paper session.
+
+orchestrator_id: "paper_trading_orchestrator_{{ session_id | default('main') }}_{{ timestamp | default('live') }}"
+
+session_type: "paper_trading"
+overall_duration_days: 30
+
+# Global settings for the paper trading session
+global_settings:
+  default_exchange: "{{ global_exchange | default('your_default_paper_exchange') }}"
+  default_paper_balance_usd: {{ global_initial_balance | default(100000) }}
+  # Add other global settings applicable to all runners or the session
+
+# This section defines the live runners to be managed by the orchestrator.
+# The structure here depends heavily on how your orchestrator consumes this config.
+# Option 1: Orchestrator dynamically loads all *.yaml files from a directory.
+#           In this case, this template might just set global settings, and
+#           start_paper.sh places individual runner configs in that directory.
+
+# Option 2: Orchestrator expects a list of runner configurations or paths to them.
+#           The start_paper.sh script would need to populate this list.
+
+managed_runners:
+  # Example of how you might list runners if the orchestrator expects explicit definitions.
+  # This would likely be populated by the start_paper.sh script if it generates multiple
+  # runner configs and needs to list them here.
+
+  # If you generate a single, comprehensive live runner config (e.g., from live_paper_template.yaml.jinja)
+  # that the orchestrator directly uses, this section might be simpler or different.
+
+  # Assuming start_paper.sh generates a primary config file (e.g., from live_paper_template.yaml.jinja)
+  # and this orchestrator template is more about wrapping it or adding session-level details.
+
+  - name: "{{ strategy_name | default('default_strategy') }}_paper_instance_1"
+    # Path to the specific runner config file, if your orchestrator loads them by path.
+    # This path would be determined and injected by the start_paper.sh script.
+    # config_file: "{{ generated_live_runner_config_path_1 }}"
+
+    # Alternatively, if parameters are embedded directly or this orchestrator IS the runner config:
+    exchange: "{{ exchange | default(global_exchange) | default('your_default_paper_exchange') }}"
+    market_symbol: "{{ market_symbol | default('BTC/USD') }}"
+    strategy_name: "{{ strategy_name | default('default_strategy') }}"
+    parameters:
+      {% if params %}
+        {% for key, value in params.items() %}
+      {{ key }}: {{ value }}
+        {% endfor %}
+      {% else %}
+      example_param_orchestrator: "default_orchestrator_value"
+      {% endif %}
+    # Add other runner-specific overrides or details needed by the orchestrator
+
+  # You could add more runners here if your setup involves multiple strategies for paper trading.
+  # - name: "strategy_X_paper_instance"
+  #   config_file: "{{ generated_live_runner_config_path_X }}"
+
+# Shared services or configurations (e.g., data handlers, notification services)
+shared_services:
+  market_data_aggregator:
+    enabled: true
+    # Configuration for the aggregator
+  notification_service:
+    enabled: {{ enable_notifications | default(true) }}
+    type: "{{ notification_type | default('email') }}" # e.g., email, slack, telegram
+    recipients:
+      - "{{ paper_trade_admin_email | default('admin@example.com') }}"
+
+# Logging and Monitoring for the orchestrator itself
+logging:
+  level: "{{ orchestrator_log_level | default('INFO') }}"
+  # Other logging settings for the orchestrator
+
+# --- Notes on Usage with start_paper.sh ---
+# The start_paper.sh script will need to:
+# 1. Receive the best_params.json.
+# 2. Potentially create an intermediate JSON data structure that combines best_params.json
+#    with other necessary info for this template (e.g., session_id, timestamp,
+#    paths to individual runner configs if generated separately).
+# 3. Render this orchestrator_paper.yaml.jinja template using that combined data.
+#
+# The variables like `{{ session_id }}`, `{{ timestamp }}`, `{{ strategy_name }}`, `{{ params }}`,
+# `{{ generated_live_runner_config_path_1 }}` are placeholders that need to be provided
+# by the data context when rendering this template.

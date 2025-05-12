@@ -1,23 +1,25 @@
-version: "3.9"
-
 services:
   backend:
     build: .
     container_name: algo-backend
     volumes:
       - ./data:/app/data
-      - ./configs:/app/configs
+      - ./configs:/app/configs:ro
     ports:
       - "8000:8000"
     restart: unless-stopped
     environment:
       - SUPERVISOR_TOKEN=${SUPERVISOR_TOKEN:-changeme}
+      - ALPACA_KEY_ID=${ALPACA_KEY_ID:-dummy}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY:-dummy}
+      - TRADOVATE_CLIENT_ID=${TRADOVATE_CLIENT_ID:-dummy}
+      - TRADOVATE_PASSWORD=${TRADOVATE_PASSWORD:-dummy}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s # How often to run the check
       timeout: 10s  # How long to wait for a response
       retries: 5    # How many times to retry before marking as unhealthy
-      start_period: 30s # How long to wait before starting health checks
+      start_period: 60s # Extended start period to give more time for initialization
 
   dashboard:
     build:

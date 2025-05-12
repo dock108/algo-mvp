@@ -399,3 +399,59 @@ Backtests are configured using YAML files. A sample configuration can be found i
 
 Key configuration options include:
 - `provider`: `alpaca` or `tradovate`
+
+## One-command paper run
+
+This project includes a streamlined workflow to go from backtesting recent data to launching a 30-day paper trading session with the best-performing parameters. This is orchestrated via a single `make` command.
+
+### Prerequisites
+
+- Ensure all dependencies for data fetching, backtesting, and live trading are installed.
+- Your trading supervisor (e.g., Docker-based) should be configurable and support hot-reloading or restarting with new configurations.
+- `jinja2-cli` and `jq` must be installed and accessible in your PATH for the helper scripts to function correctly.
+  - Install `jinja2-cli`: `pip install jinja2-cli`
+  - Install `jq`: (Consult your OS package manager, e.g., `sudo apt-get install jq` or `brew install jq`)
+- The scripts `./scripts/backtest_last45.sh`, `./scripts/choose_best.py`, and `./scripts/start_paper.sh` must be executable (`chmod +x <script_name>`). The `make ensure_scripts_executable` command can do this for you.
+
+### How it Works
+
+The `make paper` command executes the following steps:
+
+1.  **`clean_paper_artifacts` (Optional Cleanup):** Removes artifacts from previous paper runs (e.g., `best_params.json`, `generated_configs/`).
+2.  **`fetch_and_backtest` (`./scripts/backtest_last45.sh`):**
+    *   Fetches the last 45 days of market data (you need to configure the actual data fetching command within the script).
+    *   Runs parameter sweeps on your default trading strategies using this data (you need to configure the actual backtesting command).
+    *   *Expected output*: A metrics file (e.g., `./backtest_results/metrics.csv`) summarizing the performance of different parameter sets.
+3.  **`choose_parameters` (`./scripts/choose_best.py`):**
+    *   Reads the metrics file generated in the previous step.
+    *   Selects the best parameter set based on predefined criteria (e.g., Sharpe ratio, total return, max drawdown).
+    *   *Output*: Saves the best parameters to a JSON file (e.g., `./best_params.json`).
+4.  **`start_paper_session` (`./scripts/start_paper.sh`):**
+    *   Reads the `best_params.json` file.
+    *   Uses Jinja2 templates (`workflows/templates/live_paper_template.yaml.jinja` and `workflows/templates/orchestrator_paper.yaml.jinja`) to generate live runner and orchestrator YAML configuration files for a 30-day paper trading session.
+    *   The generated configuration files are saved in `./generated_configs/`.
+    *   Hot-reloads or updates your trading supervisor with the new configurations to start the paper trading session (you need to configure the actual supervisor command).
+
+### Running the Workflow
+
+1.  **Ensure Prerequisites:** Verify all prerequisites mentioned above are met.
+2.  **Configure Scripts:** You **must** customize the placeholder commands within:
+    *   `./scripts/backtest_last45.sh` (for data fetching and backtesting).
+    *   `./scripts/start_paper.sh` (for hot-reloading your supervisor).
+    *   Also, ensure the metrics output path in `backtest_last45.sh` matches the input path in the `Makefile` for `choose_best.py` (default: `./backtest_results/metrics.csv`).
+3.  **Make Scripts Executable (if not already):**
+    ```bash
+    make ensure_scripts_executable
+    ```
+4.  **Run the Paper Workflow:**
+    ```bash
+    make paper
+    ```
+
+This command will automate the entire process. Monitor the output for any errors. If successful, your paper trading session should be initiated with the optimized parameters.
+
+### Customization
+
+-   **Parameter Selection Logic:** Modify `scripts/choose_best.py` to change the metrics or logic for selecting the best parameters.
+-   **Configuration Templates:** Adjust the Jinja2 templates in `workflows/templates/` to match the exact configuration schema required by your live runners and orchestrator.
+-   **File Paths:** If you change default file paths for metrics or parameters, update them in the `Makefile` and relevant scripts.

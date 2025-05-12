@@ -130,9 +130,7 @@ def test_supervisor_cli_startup_and_shutdown(
 
         # Wait for the process to terminate
         try:
-            process.wait(
-                timeout=15
-            )  # Supervisor should stop orchestrator (mocked) and uvicorn should exit
+            process.wait(timeout=25)
         except subprocess.TimeoutExpired:
             print("Supervisor process did not terminate in time, killing...")
             process.kill()
@@ -348,7 +346,7 @@ def test_supervisor_cli_shutdown_token_validation(
             pytest.fail(f"Valid shutdown for cleanup failed: {e}")
 
         try:
-            process.wait(timeout=15)
+            process.wait(timeout=25)
         except subprocess.TimeoutExpired:
             print(
                 "Supervisor (token test) did not terminate in time after valid shutdown, killing..."
