@@ -1,13 +1,58 @@
 """Tests for additional functionality in the AlpacaBrokerAdapter to improve coverage."""
 
 from unittest.mock import AsyncMock, MagicMock
-
 import pytest
+import pytest_asyncio
 from tenacity import RetryError
 
-# Import fixtures from the original test file
-# Note: this assumes the original fixtures are visible in conftest.py or
-# that we're running both test files in the same session
+from algo_mvp.live.adapters.alpaca import AlpacaBrokerAdapter
+
+# Add fixtures that are needed for the tests in this file
+
+
+@pytest.fixture
+def mock_live_runner():
+    runner = MagicMock()
+    runner.on_trade = AsyncMock()
+    runner.on_order_update = AsyncMock()
+    runner.on_broker_event = AsyncMock()
+    return runner
+
+
+@pytest.fixture
+def mock_trading_client():
+    client = MagicMock()
+    client.get_positions = AsyncMock()
+    client.get_account = AsyncMock()
+    client.submit_order = AsyncMock()
+    client.get_orders = AsyncMock()
+    client.cancel_order = AsyncMock()
+    return client
+
+
+@pytest.fixture
+def mock_trading_stream():
+    stream = MagicMock()
+    stream.close = AsyncMock()
+    return stream
+
+
+@pytest_asyncio.fixture
+async def alpaca_adapter(mock_live_runner, mock_trading_client, mock_trading_stream):
+    adapter_instance = AlpacaBrokerAdapter(live_runner=mock_live_runner)
+    try:
+        yield adapter_instance
+    finally:
+        # Ensure close is called to stop threads and cleanup resources
+        if (
+            hasattr(adapter_instance, "stream_thread")
+            and adapter_instance.stream_thread
+            and adapter_instance.stream_thread.is_alive()
+        ):
+            await adapter_instance.close()
+
+
+# Now the original tests should work
 
 
 @pytest.mark.asyncio
