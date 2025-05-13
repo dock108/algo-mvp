@@ -43,6 +43,7 @@ pre-commit = "^4.2.0"
 pytest-asyncio = "^0.23.0"
 pytest-timeout = "^2.2.0"
 pytest-playwright = "^0.4.0"
+freezegun = "^1.5.1"
 
 [build-system]
 requires = ["poetry-core"]
@@ -72,7 +73,7 @@ exclude_lines = [
     "raise AssertionError",
     "raise NotImplementedError",
     "if 0:",
-    'if __name__ == "__main__":', # Use single quotes to simplify
+    "if\\s+__name__\\s*==\\s*.__main__.:",
     "if TYPE_CHECKING:",
     "@(abc\\.)?abstractmethod", # Escape the backslash for the dot
 ]

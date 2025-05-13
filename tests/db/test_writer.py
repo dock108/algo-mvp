@@ -1,38 +1,19 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
+from freezegun import freeze_time
 
-from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from algo_mvp.db.models import Base, Order, Fill, Equity, Log
+from algo_mvp.db.models import Order, Fill, Equity, Log
 from algo_mvp.db.writer import DBWriter
 from algo_mvp.live.models import Order as LiveOrder, Fill as LiveFill
 
 
 @pytest.fixture
-def memory_engine():
-    """Create an in-memory SQLite engine for testing."""
-    # Use "check_same_thread=False" to allow access from multiple threads
-    engine = create_engine(
-        "sqlite:///:memory:", connect_args={"check_same_thread": False}
-    )
-
-    # Enable SQLite foreign keys
-    with engine.connect() as conn:
-        conn.execute(text("PRAGMA foreign_keys=ON"))
-        conn.commit()
-
-    # Create all tables in the metadata
-    Base.metadata.create_all(engine)
-
-    return engine
-
-
-@pytest.fixture
-def db_writer(memory_engine):
-    """Create a DBWriter with an in-memory database for testing."""
-    writer = DBWriter(engine=memory_engine, queue_max=100, mock_mode=True)
+def db_writer(migrated_memory_engine):
+    """Create a DBWriter with an in-memory database for testing (mock_mode=True)."""
+    writer = DBWriter(engine=migrated_memory_engine, queue_max=100, mock_mode=True)
     yield writer
     writer.close()
 
@@ -66,7 +47,7 @@ def test_close():
     mock_engine.dispose.assert_called_once()
 
 
-def test_log_order(db_writer, memory_engine):
+def test_log_order(db_writer: DBWriter):
     """Test logging an order to the database."""
     # Create a mock order
     order = LiveOrder(
@@ -85,7 +66,7 @@ def test_log_order(db_writer, memory_engine):
     db_writer.log_order(order)
 
     # Check that the order was inserted
-    with Session(memory_engine) as session:
+    with Session(db_writer.engine) as session:
         db_order = (
             session.query(Order).filter_by(broker_order_id="test-order-1").first()
         )
@@ -97,7 +78,7 @@ def test_log_order(db_writer, memory_engine):
         assert db_order.status == "filled"
 
 
-def test_log_fill(db_writer, memory_engine):
+def test_log_fill(db_writer: DBWriter):
     """Test logging a fill to the database."""
     # First create an order to reference
     order = LiveOrder(
@@ -131,7 +112,7 @@ def test_log_fill(db_writer, memory_engine):
     db_writer.log_fill(fill)
 
     # Check that the fill was inserted
-    with Session(memory_engine) as session:
+    with Session(db_writer.engine) as session:
         # First find the order ID
         db_order = (
             session.query(Order).filter_by(broker_order_id="test-order-2").first()
@@ -146,7 +127,7 @@ def test_log_fill(db_writer, memory_engine):
         assert db_fill.commission == 1.5
 
 
-def test_log_equity(db_writer, memory_engine):
+def test_log_equity(db_writer: DBWriter):
     """Test logging an equity snapshot to the database."""
     # Create a timestamp and equity value
     timestamp = datetime.utcnow()
@@ -156,27 +137,27 @@ def test_log_equity(db_writer, memory_engine):
     db_writer.log_equity(timestamp, equity_value)
 
     # Check that the equity was inserted
-    with Session(memory_engine) as session:
+    with Session(db_writer.engine) as session:
         db_equity = session.query(Equity).first()
         assert db_equity is not None
         assert db_equity.equity == 100000.0
         assert db_equity.timestamp == timestamp
 
 
-def test_log_message(db_writer, memory_engine):
+def test_log_message(db_writer: DBWriter):
     """Test logging a message to the database."""
     # Log a message
     db_writer.log_message("ERROR", "Test error message")
 
     # Check that the message was inserted
-    with Session(memory_engine) as session:
+    with Session(db_writer.engine) as session:
         db_log = session.query(Log).first()
         assert db_log is not None
         assert db_log.level == "ERROR"
         assert db_log.message == "Test error message"
 
 
-def test_log_methods_when_closed(db_writer):
+def test_log_methods_when_closed(db_writer: DBWriter):
     """Test that log methods don't add to the queue when the writer is closed."""
     # Close the writer
     db_writer.close()
@@ -191,7 +172,7 @@ def test_log_methods_when_closed(db_writer):
     assert db_writer.queue.empty()
 
 
-def test_process_fill_with_nonexistent_order(db_writer, memory_engine):
+def test_process_fill_with_nonexistent_order(db_writer: DBWriter):
     """Test processing a fill for an order that doesn't exist."""
     # Create a fill for a non-existent order
     fill = LiveFill(
@@ -209,7 +190,7 @@ def test_process_fill_with_nonexistent_order(db_writer, memory_engine):
     db_writer.log_fill(fill)
 
     # Should not have created a fill since the order doesn't exist
-    with Session(memory_engine) as session:
+    with Session(db_writer.engine) as session:
         fill_count = session.query(Fill).count()
         assert fill_count == 0
 
@@ -245,3 +226,110 @@ def test_worker_handles_exceptions():
 
         # Clean up
         writer.close()
+
+
+# --- Threaded (non-mock mode) tests ---
+
+
+@pytest.fixture
+def db_writer_threaded(migrated_memory_engine):
+    """Create a DBWriter with a worker thread for testing."""
+    writer = DBWriter(engine=migrated_memory_engine, queue_max=100, mock_mode=False)
+    yield writer
+    # close() will wait for queue to drain and thread to stop, called by fixture teardown
+    # Ensure writer is closed even if test fails to call it
+    if not writer._closed:
+        writer.close()
+
+
+@freeze_time("2025-05-13 01:59:12.191949+00:00")
+def test_log_order_threaded(db_writer_threaded: DBWriter):
+    """Test logging an order via the worker thread."""
+    order = LiveOrder(
+        id="thread-order-1",
+        symbol="TICK1",
+        qty=1.0,
+        side="buy",
+        order_type="market",
+        status="new",
+        created_at=datetime.utcnow(),
+    )
+    db_writer_threaded.log_order(order)
+    # Calling close() ensures all items in queue are processed before verification.
+    db_writer_threaded.close()
+
+    with Session(db_writer_threaded.engine) as session:
+        db_order = (
+            session.query(Order).filter_by(broker_order_id="thread-order-1").first()
+        )
+        assert db_order is not None
+        assert db_order.symbol == "TICK1"
+
+
+@freeze_time("2025-05-13 01:59:12.990313+00:00")
+def test_log_fill_threaded(db_writer_threaded: DBWriter):
+    """Test logging a fill via the worker thread."""
+    order_created_at = datetime.utcnow()
+    fill_timestamp = order_created_at + timedelta(seconds=1)
+
+    order = LiveOrder(
+        id="thread-order-fill",
+        symbol="TICK2",
+        qty=2.0,
+        side="sell",
+        order_type="limit",
+        status="partially_filled",
+        limit_price=10.0,
+        created_at=order_created_at,
+    )
+    db_writer_threaded.log_order(order)
+
+    fill = LiveFill(
+        id="thread-fill-1",
+        order_id="thread-order-fill",
+        symbol="TICK2",
+        qty=2.0,
+        price=10.0,
+        side="sell",
+        commission=0.1,
+        timestamp=fill_timestamp,
+    )
+    db_writer_threaded.log_fill(fill)
+    db_writer_threaded.close()
+
+    with Session(db_writer_threaded.engine) as session:
+        db_order = (
+            session.query(Order).filter_by(broker_order_id="thread-order-fill").first()
+        )
+        assert db_order is not None
+        # Check that order status is updated by the fill processing logic if applicable
+        # For now, just check fill exists
+        db_fill = session.query(Fill).filter_by(order_id=db_order.id).first()
+        assert db_fill is not None
+        assert db_fill.fill_qty == 2.0
+        assert db_fill.filled_at == fill_timestamp
+
+
+@freeze_time("2025-05-13 01:59:13.761547+00:00")
+def test_log_equity_threaded(db_writer_threaded: DBWriter):
+    """Test logging equity via the worker thread."""
+    ts = datetime.utcnow()
+    db_writer_threaded.log_equity(ts, 50000.0)
+    db_writer_threaded.close()
+
+    with Session(db_writer_threaded.engine) as session:
+        db_equity = session.query(Equity).filter_by(equity=50000.0).first()
+        assert db_equity is not None
+        assert db_equity.timestamp == ts
+
+
+@freeze_time("2025-05-13 01:59:14.516644+00:00")
+def test_log_message_threaded(db_writer_threaded: DBWriter):
+    """Test logging a message via the worker thread."""
+    db_writer_threaded.log_message("THREAD_INFO", "Worker processed this")
+    db_writer_threaded.close()
+
+    with Session(db_writer_threaded.engine) as session:
+        db_log = session.query(Log).filter_by(level="THREAD_INFO").first()
+        assert db_log is not None
+        assert db_log.message == "Worker processed this"

@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from algo_mvp.db import get_engine
-from algo_mvp.db.models import Equity, Fill, Log, Order
+from algo_mvp.db.models import Equity, Fill, Log, Order, Base
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,13 @@ class DBWriter:
                 logger.error(f"Error processing log in mock mode: {e}", exc_info=True)
             return
 
-        self.queue.put(("log", log_data))
+        # Added check for consistency with other log methods
+        if not self._mock_mode:
+            self.queue.put(("log", log_data))
+        # If we reached here in non-mock mode without putting on queue,
+        # it implies an inconsistency, but we'll let the queue handle it.
+        # Alternatively, add an else: logger.warning perhaps?
+        # For now, just ensuring queue.put only happens if not mock_mode.
 
     def close(self):
         """Flush remaining queue items, stop worker, and dispose engine.
@@ -213,6 +219,16 @@ class DBWriter:
         session = None
         try:
             session = Session(self.engine)
+
+            # Ensure tables exist within the worker's context
+            # This is mainly for SQLite in-memory testing with threads
+            try:
+                Base.metadata.create_all(self.engine)
+                logger.debug("Tables ensured/created by worker thread session.")
+            except Exception as e:
+                logger.error(f"Worker failed to ensure tables: {e}", exc_info=True)
+                # If we can't even create tables, no point continuing
+                return
 
             while not self._stop_event.is_set():
                 try:

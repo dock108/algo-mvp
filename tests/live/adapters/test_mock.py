@@ -238,3 +238,124 @@ async def test_mock_adapter_multiple_orders_same_symbol(
     assert mock_adapter.get_cash_calls == get_cash_calls_at_start + 1
     # get_positions called for baseline + final assert
     assert mock_adapter.get_positions_calls == get_positions_calls_at_start + 1
+
+
+@pytest.mark.asyncio
+async def test_mock_adapter_invalid_order_side(mock_adapter: MockBrokerAdapter):
+    """Test handling of an invalid order side."""
+    initial_cash_dict = await mock_adapter.get_cash()
+    initial_cash_value = initial_cash_dict["USD"]
+    symbol = "TEST/USD"
+    qty = 10
+    limit_price = 150.0
+
+    # Submit order with an invalid side
+    order_response = await mock_adapter.submit_order(
+        symbol, qty, "invalid_side", "limit", limit_price
+    )
+
+    # Check the response indicates an error
+    assert order_response["status"] == "error"
+    assert order_response["reason"] == "invalid order side"
+
+    # Verify cash and positions were not affected
+    current_cash_dict = await mock_adapter.get_cash()
+    assert current_cash_dict["USD"] == initial_cash_value
+
+    positions_list = await mock_adapter.get_positions()
+    found_position = next((p for p in positions_list if p.symbol == symbol), None)
+    assert found_position is None
+
+
+@pytest.mark.asyncio
+async def test_mock_adapter_insufficient_funds(mock_adapter: MockBrokerAdapter):
+    """Test buying with insufficient funds."""
+    # Set cash to a very low value
+    mock_adapter.cash = 100.0
+
+    symbol = "TEST/USD"
+    qty = 10
+    limit_price = 150.0  # Total cost would be 1500, exceeding available cash
+
+    # Try to buy with insufficient funds
+    order_response = await mock_adapter.submit_order(
+        symbol, qty, "buy", "limit", limit_price
+    )
+
+    # Check the response indicates rejection due to insufficient funds
+    assert order_response["status"] == "rejected"
+    assert order_response["reason"] == "insufficient funds"
+
+    # Verify cash and positions were not affected
+    current_cash_dict = await mock_adapter.get_cash()
+    assert current_cash_dict["USD"] == 100.0
+
+    positions_list = await mock_adapter.get_positions()
+    found_position = next((p for p in positions_list if p.symbol == symbol), None)
+    assert found_position is None
+
+
+@pytest.mark.asyncio
+async def test_mock_adapter_insufficient_position(mock_adapter: MockBrokerAdapter):
+    """Test selling with insufficient position."""
+    symbol = "TEST/USD"
+    qty_to_buy = 5
+    buy_price = 100.0
+
+    # First, establish a small position
+    await mock_adapter.submit_order(symbol, qty_to_buy, "buy", "limit", buy_price)
+
+    # Now try to sell more than we have
+    qty_to_sell = 10
+    sell_price = 110.0
+
+    order_response = await mock_adapter.submit_order(
+        symbol, qty_to_sell, "sell", "limit", sell_price
+    )
+
+    # Check the response indicates rejection due to insufficient position
+    assert order_response["status"] == "rejected"
+    assert order_response["reason"] == "insufficient position"
+
+    # Verify position wasn't changed
+    positions_list = await mock_adapter.get_positions()
+    found_position = next((p for p in positions_list if p.symbol == symbol), None)
+    assert found_position is not None
+    assert found_position.qty == qty_to_buy
+
+
+@pytest.mark.asyncio
+async def test_mock_adapter_sell_entire_position(mock_adapter: MockBrokerAdapter):
+    """Test selling the entire position removes it from positions dictionary."""
+    symbol = "TEST/USD"
+    qty = 5
+    buy_price = 100.0
+
+    # First, establish a position
+    await mock_adapter.submit_order(symbol, qty, "buy", "limit", buy_price)
+
+    # Verify the position exists
+    positions_list_before = await mock_adapter.get_positions()
+    assert len(positions_list_before) == 1
+
+    # Now sell the entire position
+    await mock_adapter.submit_order(symbol, qty, "sell", "limit", buy_price)
+
+    # Verify the position has been removed
+    positions_list_after = await mock_adapter.get_positions()
+    assert len(positions_list_after) == 0
+
+
+@pytest.mark.asyncio
+async def test_mock_adapter_connect(mock_adapter: MockBrokerAdapter):
+    """Test connect method."""
+    # Reset connection state
+    mock_adapter._is_connected = False
+
+    # Connect
+    result = await mock_adapter.connect()
+
+    # Verify connection succeeded
+    assert result is True
+    assert mock_adapter.connect_calls == 1
+    assert mock_adapter._is_connected is True

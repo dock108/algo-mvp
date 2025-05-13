@@ -182,23 +182,25 @@ class AlpacaFetcher:
             return None
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     # Example Usage (requires ALPACA_KEY_ID and ALPACA_SECRET_KEY environment variables)
-    print("Testing AlpacaFetcher...")
+    print("Testing AlpacaFetcher...")  # pragma: no cover
     # Load environment variables if .env file is present and python-dotenv is installed
-    try:
-        from dotenv import load_dotenv
+    try:  # pragma: no cover
+        from dotenv import load_dotenv  # pragma: no cover
 
-        if load_dotenv():
-            print("Loaded .env file")
-    except ImportError:
-        print(".env file not loaded (python-dotenv not installed or .env not found)")
-        pass  # Optional dependency
+        if load_dotenv():  # pragma: no cover
+            print("Loaded .env file")  # pragma: no cover
+    except ImportError:  # pragma: no cover
+        print(
+            ".env file not loaded (python-dotenv not installed or .env not found)"
+        )  # pragma: no cover
+        pass  # Optional dependency # pragma: no cover
 
-    api_key_id = os.getenv("ALPACA_KEY_ID")
-    api_secret_key = os.getenv("ALPACA_SECRET_KEY")
+    api_key_id = os.getenv("ALPACA_KEY_ID")  # pragma: no cover
+    api_secret_key = os.getenv("ALPACA_SECRET_KEY")  # pragma: no cover
 
-    if not api_key_id or not api_secret_key:
+    if not api_key_id or not api_secret_key:  # pragma: no cover
         print(
             "ALPACA_KEY_ID and ALPACA_SECRET_KEY must be set in environment for testing."
         )

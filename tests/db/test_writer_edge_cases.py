@@ -1,12 +1,15 @@
 import time
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
+from unittest.mock import patch
+import logging
 
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from algo_mvp.db.models import Order, Fill, Log, Equity
 from algo_mvp.db.writer import DBWriter
-from algo_mvp.live.models import Order as LiveOrder, Fill as LiveFill
+from algo_mvp.live import models as live_models
 
 
 # Helper function to clear all tables for a fresh start in each test
@@ -60,7 +63,7 @@ def test_duplicate_broker_order_id(db_engine, db_session):
     writer = DBWriter(engine=db_engine, mock_mode=True)
 
     # Create a second order with the same ID but different details
-    second_order = LiveOrder(
+    second_order = live_models.Order(
         id="duplicate-id",  # Same ID
         symbol="MSFT",  # Different symbol
         qty=20.0,  # Different quantity
@@ -112,7 +115,7 @@ def test_invalid_foreign_key_on_fill(db_engine, db_session):
     writer = DBWriter(engine=db_engine, mock_mode=True)
 
     # Add a fill for a non-existent order - this will fail with FK constraint
-    invalid_fill = LiveFill(
+    invalid_fill = live_models.Fill(
         id="invalid-fill",
         order_id="nonexistent-order",
         symbol="AAPL",
@@ -125,7 +128,7 @@ def test_invalid_foreign_key_on_fill(db_engine, db_session):
     writer.log_fill(invalid_fill)
 
     # Add a valid fill for the valid order
-    valid_fill = LiveFill(
+    valid_fill = live_models.Fill(
         id="valid-fill",
         order_id="valid-order",
         symbol="AAPL",
@@ -333,7 +336,7 @@ def test_graceful_shutdown(db_engine, db_session):
     # Add a bunch of events
     for i in range(100):
         writer.log_order(
-            LiveOrder(
+            live_models.Order(
                 id=f"shutdown-order-{i}",
                 symbol="TEST",
                 qty=10.0,
@@ -390,7 +393,7 @@ def test_keyboard_interrupt_recovery(db_engine, db_session):
 
     # Add post-interrupt orders
     for i in range(5):
-        order = LiveOrder(
+        order = live_models.Order(
             id=f"post-interrupt-{i}",
             symbol="RECOVERY",
             qty=5.0,
@@ -589,3 +592,99 @@ def test_mixed_events_with_errors(db_engine, db_session):
     assert fill_count == 25, f"Expected 25 fills but found {fill_count}"
     assert equity_count == 10, f"Expected 10 equity entries but found {equity_count}"
     assert log_count >= 53, f"Expected at least 53 logs but found {log_count}"
+
+
+# --- Mock Mode Specific Tests ---
+
+
+def test_db_writer_init_mock_mode(migrated_memory_engine, caplog):
+    """Test DBWriter initialization in mock mode."""
+    with caplog.at_level(logging.INFO):
+        writer = DBWriter(engine=migrated_memory_engine, mock_mode=True)
+    assert writer._mock_mode is True
+    assert hasattr(writer, "_mock_session")
+    assert isinstance(writer._mock_session, Session)
+    assert "DBWriter initialized in mock mode" in caplog.text
+    # Ensure worker thread is NOT started
+    assert not hasattr(writer, "_worker_thread")
+    # Use the writer's engine for assertion
+    assert writer.engine == migrated_memory_engine
+    writer.close()  # Close to dispose engine if needed
+
+
+@patch("algo_mvp.db.writer.DBWriter._process_order")
+def test_log_order_mock_mode_error(mock_process, migrated_memory_engine, caplog):
+    """Test error handling during log_order in mock mode."""
+    writer = DBWriter(engine=migrated_memory_engine, mock_mode=True)
+    mock_process.side_effect = Exception("DB Error on Order")
+
+    # Use aliased import for LiveOrder
+    dummy_order = live_models.Order(
+        id="ord1",
+        symbol="TEST",
+        side="buy",
+        order_type="limit",
+        qty=10,
+        limit_price=100,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        writer.log_order(dummy_order)
+
+    assert mock_process.called
+    assert "Error processing order in mock mode: DB Error on Order" in caplog.text
+    writer.close()
+
+
+@patch("algo_mvp.db.writer.DBWriter._process_fill")
+def test_log_fill_mock_mode_error(mock_process, migrated_memory_engine, caplog):
+    """Test error handling during log_fill in mock mode."""
+    writer = DBWriter(engine=migrated_memory_engine, mock_mode=True)
+    mock_process.side_effect = Exception("DB Error on Fill")
+
+    # Use aliased import for LiveFill and fix comment spacing
+    dummy_fill = live_models.Fill(
+        id="fill1",
+        order_id="ord1",
+        symbol="TEST",
+        side="buy",
+        qty=10,
+        price=100,
+        commission=0.5,
+        timestamp=datetime.now(timezone.utc),  # Correct usage with timezone
+    )
+
+    with caplog.at_level(logging.ERROR):
+        writer.log_fill(dummy_fill)
+
+    assert mock_process.called
+    assert "Error processing fill in mock mode: DB Error on Fill" in caplog.text
+    writer.close()
+
+
+@patch("algo_mvp.db.writer.DBWriter._process_equity")
+def test_log_equity_mock_mode_error(mock_process, migrated_memory_engine, caplog):
+    """Test error handling during log_equity in mock mode."""
+    writer = DBWriter(engine=migrated_memory_engine, mock_mode=True)
+    mock_process.side_effect = Exception("DB Error on Equity")
+
+    with caplog.at_level(logging.ERROR):
+        writer.log_equity(timestamp=datetime.now(), equity=10000.0)  # Correct usage
+
+    assert mock_process.called
+    assert "Error processing equity in mock mode: DB Error on Equity" in caplog.text
+    writer.close()
+
+
+@patch("algo_mvp.db.writer.DBWriter._process_log")
+def test_log_message_mock_mode_error(mock_process, migrated_memory_engine, caplog):
+    """Test error handling during log_message in mock mode."""
+    writer = DBWriter(engine=migrated_memory_engine, mock_mode=True)
+    mock_process.side_effect = Exception("DB Error on Log")
+
+    with caplog.at_level(logging.ERROR):
+        writer.log_message(level="ERROR", msg="Test log message")
+
+    assert mock_process.called
+    assert "Error processing log in mock mode: DB Error on Log" in caplog.text
+    writer.close()
