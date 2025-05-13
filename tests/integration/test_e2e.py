@@ -244,6 +244,10 @@ def test_micro_run_e2e(memory_engine, mock_strategy_import):
     # Create an AnalyticsAPI with the in-memory engine
     api = AnalyticsAPI(engine=memory_engine)
 
+    # Ensure tables are created in this connection context - helps prevent SQLite in-memory issues in Python 3.11
+    with memory_engine.connect():
+        Base.metadata.create_all(memory_engine)
+
     # Create a function to handle empty data cases
     def empty_df():
         return pd.DataFrame()
